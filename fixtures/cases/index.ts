@@ -50,6 +50,8 @@ interface Family {
   mode?: "indistinguishable" | "assertion" | "passing" | "dynamic" | "helper" | "unsafe";
 }
 
+export const NEUTRAL_CONTROL_HELP = "Use the control that matches your task.";
+
 // Each row is a distinct business scenario. Its two variants stay in one split.
 const families: readonly Family[] = [
   { id: "checkout-order", category: "rename", title: "注文の確定", intent: "Place the shopping basket order, not save it for later.", oldName: "Place order", newName: "Buy these items", distraction: "Save basket", goal: { orders: 1, saved: false }, status: "Order received" },
@@ -111,13 +113,13 @@ function buildCase(family: Family, position: number, variant: "a" | "b"): Fixtur
   const target: Control = {
     key: "k1", name: family.oldName, kind,
     ...(oldGroup ? { group: oldGroup } : {}),
-    help: "Changes take effect immediately.",
+    help: NEUTRAL_CONTROL_HELP,
     effect: family.goal, status: family.status,
   };
   const other: Control = {
     key: "k2", name: family.distraction, kind,
     ...(family.distractionGroup ? { group: family.distractionGroup + suffix } : {}),
-    help: "This control performs the operation described by its own section and label.",
+    help: NEUTRAL_CONTROL_HELP,
     effect: { unrelatedActions: 1 }, status: family.status,
   };
   const afterTarget: Control = {
@@ -125,11 +127,6 @@ function buildCase(family: Family, position: number, variant: "a" | "b"): Fixtur
     ...(newGroup ? { group: newGroup } : {}),
     effect: family.broken ?? family.goal,
   };
-  if (family.mode === "indistinguishable") {
-    // Neither source order nor invisible keys are admissible evidence for this family.
-    afterTarget.help = "Pending reimbursement";
-    other.help = "Pending reimbursement";
-  }
   if (family.mode === "passing") afterTarget.group = isB ? "Report toolbar" : "Report actions";
   const beforeControls = isB ? [other, target] : [target, other];
   let afterControls = family.category === "missing"
@@ -138,7 +135,7 @@ function buildCase(family: Family, position: number, variant: "a" | "b"): Fixtur
   if (isB) {
     afterControls = [...afterControls, {
       key: "k3", name: kind === "button" ? "Help" : "Quick search", kind,
-      group: "Utilities", help: "General navigation",
+      group: "Utilities", help: NEUTRAL_CONTROL_HELP,
       effect: { helpOpened: true }, status: "Help opened",
     }];
   }

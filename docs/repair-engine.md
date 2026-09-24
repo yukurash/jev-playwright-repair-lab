@@ -108,6 +108,16 @@ order is a SHA-256 sort over case ID and observed candidate content, not DOM
 position, target truth, or provider. IDs `c1`, `c2`, ... encode only that order.
 All providers receive the same finite choices.
 
+Every target, distractor, and utility control uses the **same neutral helper
+text**, in both app revisions and every split, including indistinguishable
+approvals. Helper templates must not encode target membership. Dataset tests
+check every control across all 60 cases and demonstrate that a helper-only
+selector matches all controls, not a unique target. Browser tests verify the
+actual exposed context in development, calibration, and final examples.
+Changing context changes its deterministic candidate ordering; regenerate frozen
+requests/results after a fixture-context correction. These checks establish a
+data invariant, not model accuracy.
+
 The decision request contains the pre-authored intent, old locator and observed
 old context, and current candidate names/labels/context. It never contains
 internal control keys, independent expected state, target truth, expected choice,

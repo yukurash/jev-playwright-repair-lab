@@ -75,6 +75,16 @@ connection and verified-pricing fields.
 shared budget ledger. A timeout with unknown usage retains its reservation and
 stops subsequent paid work rather than assuming it was free.
 
+After completing private configuration, initialize the genuinely new project
+ledger once. This command does not make API calls and refuses an existing ledger:
+
+```powershell
+npm run budget:init -- --confirm-new-budget
+```
+
+Never delete an existing ledger to reset the budget. Recovery and explicit
+reconciliation are documented in [provider configuration](docs/providers.md).
+
 ## Local workflow
 
 ```powershell
@@ -86,6 +96,8 @@ npm run capture -- --case <case-id>
 npm run repair -- --case <case-id> --provider rule
 
 # Only after access, pricing, and permission have been confirmed:
+npm run doctor -- --provider jev --live
+npm run doctor -- --provider azure --live
 npm run repair -- --case <case-id> --provider azure --live
 npm run repair -- --case <case-id> --provider jev --live
 

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { DecisionProvider, DecisionRequest } from "../../core/src/index.js";
 import { capture, runCase } from "./index.js";
 import { privateWorkspaceRoot, repositoryRoot } from "./workspace.js";
+import { NEUTRAL_CONTROL_HELP } from "../../../fixtures/cases/index.js";
 
 function select(predicate: (candidate: DecisionRequest["candidates"][number]) => boolean): DecisionProvider {
   return {
@@ -24,6 +25,17 @@ const noCall: DecisionProvider = {
 };
 
 describe("real Chromium locator repair", () => {
+  it.each(["checkout-order-b", "contact-email-b", "indistinguishable-approval-b"])("exposes identical neutral helpers for live candidates in %s", async (caseId) => {
+    const result = await capture(caseId);
+    expect(result.status).toBe("repairable");
+    expect(result.candidates.length).toBeGreaterThan(1);
+    expect(result.request?.oldContext).toContain(NEUTRAL_CONTROL_HELP);
+    for (const candidate of result.candidates) {
+      expect(candidate.context).toContain(NEUTRAL_CONTROL_HELP);
+      expect(candidate.context).not.toMatch(/Changes take effect immediately|This control performs|Pending reimbursement|General navigation/);
+    }
+  }, 20_000);
+
   it("captures named group context under the actual tsx CLI transform", async () => {
     const { stdout } = await promisify(execFile)(process.execPath, [
       "--import", "tsx", "--input-type=module", "-e",

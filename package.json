@@ -11,6 +11,7 @@
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "verify": "npm run typecheck && npm test && npm run build:demo && npm run check:public",
     "doctor": "tsx packages/cli/src/index.ts doctor",
+    "budget:init": "tsx packages/cli/src/index.ts init-budget",
     "capture": "tsx packages/cli/src/index.ts capture",
     "repair": "tsx packages/cli/src/index.ts repair",
     "freeze": "tsx packages/cli/src/index.ts freeze",

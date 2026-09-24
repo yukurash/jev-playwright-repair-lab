@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cases, datasetManifest, fixtureCases } from "../../../fixtures/cases/index.js";
+import { cases, datasetManifest, fixtureCases, NEUTRAL_CONTROL_HELP } from "../../../fixtures/cases/index.js";
 import { evaluateOracle, oracleFor } from "../../../fixtures/oracles/index.js";
 import { renderPage } from "../../../apps/fixture/src/index.js";
 
@@ -27,6 +27,29 @@ describe("authored dataset boundaries", () => {
       expect(Object.keys(item).sort()).toEqual(["category", "familyId", "id", "split", "title"]);
     }
     expect(datasetManifest.independenceUnit).toBe("familyId");
+  });
+
+  it.each(["development", "calibration", "final"] as const)("helper text cannot distinguish targets from distractors anywhere in %s", (split) => {
+    const helperRoles = new Map<string, Set<string>>();
+    for (const fixture of fixtureCases.filter((item) => item.split === split)) {
+      for (const phase of ["before", "after"] as const) {
+        const controls = fixture[phase].controls;
+        for (const control of controls) {
+          expect(control.help, `${fixture.id}/${phase}/${control.key}`).toBe(NEUTRAL_CONTROL_HELP);
+          const roles = helperRoles.get(control.help!) ?? new Set<string>();
+          roles.add(control.key === "k1" ? "target" : "distractor");
+          helperRoles.set(control.help!, roles);
+        }
+        const target = controls.find((control) => control.key === "k1");
+        if (target) {
+          const helperOnlyMatches = controls.filter((control) => control.help === target.help);
+          expect(helperOnlyMatches, `${fixture.id}/${phase}`).toEqual(controls);
+          expect(helperOnlyMatches.length, `${fixture.id}/${phase}`).toBeGreaterThan(1);
+        }
+      }
+    }
+    expect([...helperRoles.keys()]).toEqual([NEUTRAL_CONTROL_HELP]);
+    expect(helperRoles.get(NEUTRAL_CONTROL_HELP)).toEqual(new Set(["target", "distractor"]));
   });
 
   it("stores separate business truth and catches target-correct corrupt state", () => {
