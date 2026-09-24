@@ -244,6 +244,10 @@ export function DataError({ message }: { message: string }) {
 export function App({ dataset }: { dataset: PublicDataset }) {
   const empty = dataset.trials.length === 0;
   const live = dataset.trials.filter((trial) => trial.inference === "live").length;
+  const measuredModels = (["azure", "jev"] as const).filter((provider) => dataset.trials.some((trial) => trial.provider === provider && trial.inference === "live" && trial.decision !== null && trial.usage !== undefined));
+  const modelNames = { azure: "GPT-5.5", jev: "Jev" };
+  const pendingModels = (["azure", "jev"] as const).filter((provider) => !measuredModels.includes(provider)).map((provider) => modelNames[provider]);
+  const collectionTitle = empty ? "未収集" : measuredModels.length === 1 ? `${modelNames[measuredModels[0]!]}のみ実測` : measuredModels.length === 2 ? "記録を公開中" : "API 実測は未収集";
   return <>
     <a href="#main" className="skip-link">本文へスキップ</a>
     <div className="site-shell"><Header />
@@ -253,7 +257,7 @@ export function App({ dataset }: { dataset: PublicDataset }) {
           <a className="button-link" href={`${repository}#local-workflow`} target="_blank" rel="noreferrer"><Icon name="code" />ローカルで試す<Icon name="external" /></a>
         </section>
         <section className="collection-status" aria-label="データ収集状況">
-          <div className="collection-main"><span className={`status-dot ${empty ? "pending" : ""}`} /><span>API比較</span><h2>{empty ? "未収集" : live ? "記録を公開中" : "API 実測は未収集"}</h2><p>{empty ? "まずは説明ケースで、修復と検証の流れを確認できます。" : `${dataset.trials.length} 件の保存済み試行。API 実測 ${live} 件 / 決定論的実行 ${dataset.trials.length - live} 件。`}</p></div>
+          <div className="collection-main"><span className={`status-dot ${pendingModels.length ? "pending" : ""}`} /><span>API比較</span><h2>{collectionTitle}</h2><p>{empty ? "まずは説明ケースで、修復と検証の流れを確認できます。" : `${dataset.trials.length} 件の保存済み試行。API方式の試行 ${live} 件 / 決定論的実行（ガードを含む）${dataset.trials.length - live} 件。${pendingModels.length ? ` ${pendingModels.join("・")}は未実測です。方式間の優劣はまだ比較できません。` : ""}`}</p></div>
           <span className="collection-detail">{dataset.publicationApproved ? "公開承認済みの記録" : "方式の優劣・性能値は未掲載"}</span>
         </section>
         {empty ? <Walkthrough /> : <Results dataset={dataset} />}

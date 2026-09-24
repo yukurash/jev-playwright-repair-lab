@@ -47,6 +47,7 @@ beforeAll(async () => {
     trialFixture({ afterHtml: hostileHtml }),
     trialFixture({ provider: "jev", model: "test-jev", status: "abstained", decision: "ABSTAIN", repairedTest: undefined, originalTestPassed: null, oraclePassed: null, targetCorrect: null, confidence: 0.7, recordedAt: "2026-01-01T00:01:00.000Z" }),
     trialFixture({ caseId: "test-other", title: "別ケース", provider: "azure", inference: "live", usage: { inputTokens: 120, outputTokens: 5 }, costUsd: 0.002, oraclePassed: true, targetCorrect: true }),
+    trialFixture({ caseId: "test-guard", title: "モデル未呼び出し", provider: "azure", model: "not-invoked", status: "unsupported", decision: null, expectedDecision: null, repairable: false, repairedTest: undefined, originalTestPassed: false, oraclePassed: null, targetCorrect: null, latency: { captureMs: 10, decisionMs: 0, validationMs: 0, totalMs: 10 } }),
   ]));
   await buildPreview("invalid", { ...datasetFixture(), schemaVersion: 99 });
 }, 120_000);
@@ -170,6 +171,23 @@ describe("recorded-only comparison demo", () => {
       expect(await page.locator("html").getAttribute("data-executed")).not.toBe("yes");
       expect(externalRequests).toEqual([]);
       expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  });
+
+  it("labels a partial API release without attributing deterministic guards to a model", async () => {
+    const page = await open("recorded");
+    try {
+      const status = page.getByRole("region", { name: "データ収集状況" });
+      await browserExpect(status.getByRole("heading", { name: "GPT-5.5のみ実測" })).toBeVisible();
+      await browserExpect(status).toContainText("Jevは未実測です。方式間の優劣はまだ比較できません。");
+      await browserExpect(status).toContainText("4 件の保存済み試行。API方式の試行 1 件 / 決定論的実行（ガードを含む）3 件");
+      await page.getByLabel("ケース", { exact: true }).selectOption("test-guard");
+      await browserExpect(page.locator(".record-meta")).toContainText("決定論的実行の保存記録");
+      await browserExpect(page.locator(".metric-list > div").filter({ hasText: "記録済みコスト" })).toContainText("未記録");
+      await page.setViewportSize({ width: 320, height: 812 });
+      await browserExpect(status).toBeVisible();
+      await browserExpect(status).toContainText("Jevは未実測");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     } finally { await page.close(); }
   });
 
