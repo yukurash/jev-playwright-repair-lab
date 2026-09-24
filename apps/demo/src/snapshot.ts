@@ -32,15 +32,15 @@ export function snapshotDocument(source: string): string {
     return `<${tag}${attrs}${type}>${voidTags.has(tag) ? "" : `${children}</${tag}>`}`;
   };
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:#243b36; background:#fbfcfa; font-size:14px; }
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:#243247; background:#f8fafc; font-size:14px; }
     * { box-sizing:border-box; } body { margin:0; padding:26px; overflow-wrap:anywhere; }
     h1,h2,h3 { margin:0 0 18px; font-size:18px; font-weight:650; letter-spacing:-.02em; }
-    p { color:#62746e; line-height:1.8; } section, fieldset, form { margin:14px 0; }
-    fieldset { border:1px solid #dce4dc; border-radius:8px; padding:18px; }
+    p { color:#59677c; line-height:1.8; } section, fieldset, form { margin:14px 0; }
+    fieldset { border:1px solid #d8e0ec; border-radius:6px; padding:18px; }
     label { display:block; font-size:12px; font-weight:600; margin:14px 0 7px; }
-    input:not([type=checkbox]):not([type=radio]),textarea,select { display:block; width:100%; max-width:380px; padding:10px 12px; background:white; color:inherit; border:1px solid #d4ddd5; border-radius:6px; font:inherit; }
-    button { margin:18px 10px 0 0; padding:11px 18px; background:#176450; color:white; border:0; border-radius:6px; font:600 13px inherit; }
-    table { border-collapse:collapse; width:100%; } td,th { text-align:left; padding:8px; border-bottom:1px solid #dce4dc; }
+    input:not([type=checkbox]):not([type=radio]),textarea,select { display:block; width:100%; max-width:380px; padding:10px 12px; background:white; color:inherit; border:1px solid #cdd7e5; border-radius:5px; font:inherit; }
+    button { margin:18px 10px 0 0; padding:11px 18px; background:#285eaa; color:white; border:0; border-radius:5px; font-family:inherit; font-size:13px; font-weight:600; }
+    table { border-collapse:collapse; width:100%; } td,th { text-align:left; padding:8px; border-bottom:1px solid #d8e0ec; }
     code,pre { white-space:pre-wrap; } ul,ol { padding-left:20px; }
   </style></head><body inert>${[...document.body.childNodes].map(serialize).join("")}</body></html>`;
 }

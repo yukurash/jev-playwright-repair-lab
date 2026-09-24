@@ -133,3 +133,8 @@ co-author. This project does not backdate or pad contribution history.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The unmodified Anthropic `frontend-design` skill under
+[.github/skills/frontend-design](.github/skills/frontend-design) is separately
+licensed under its included Apache-2.0 [LICENSE.txt](.github/skills/frontend-design/LICENSE.txt).
+See the [demo design notes](apps/demo/README.md#design) for provenance and scope.

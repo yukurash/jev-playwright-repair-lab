@@ -72,10 +72,55 @@ describe("recorded-only comparison demo", () => {
       await page.getByRole("button", { name: "03 正しさを確かめる" }).click();
       await browserExpect(page.getByRole("heading", { name: "緑のテストと、正しい操作は別。" })).toBeVisible();
       const initialTheme = await page.locator("html").getAttribute("data-theme");
+      expect(initialTheme).toBe("dark");
       await page.getByRole("button", { name: /モードに切り替える/ }).click();
       expect(await page.locator("html").getAttribute("data-theme")).not.toBe(initialTheme);
       await page.reload();
       expect(await page.locator("html").getAttribute("data-theme")).not.toBe(initialTheme);
+    } finally { await page.close(); }
+  });
+
+  it("keeps the actual workbench above the fold rather than a decorative hero", async () => {
+    const page = await open("empty", { width: 1440, height: 900 });
+    try {
+      for (const selector of [".case-list", ".example-editor", ".inspector-heading"]) {
+        const box = await page.locator(selector).boundingBox();
+        expect(box).not.toBeNull();
+        expect(box!.y + box!.height).toBeLessThan(900);
+      }
+      const sidebar = await page.locator(".case-sidebar").boundingBox();
+      const editor = await page.locator(".editor-pane").boundingBox();
+      const inspector = await page.locator(".inspector").boundingBox();
+      expect(sidebar!.x + sidebar!.width).toBeLessThanOrEqual(editor!.x + 1);
+      expect(editor!.x + editor!.width).toBeLessThanOrEqual(inspector!.x + 1);
+      await browserExpect(page.getByRole("button", { name: "差分", exact: true })).toHaveAttribute("aria-pressed", "true");
+      await browserExpect(page.locator(".example-editor .added")).toHaveCount(1);
+    } finally { await page.close(); }
+  });
+
+  it("switches illustrative cases and restores shareable state without inventing model results", async () => {
+    const page = await open("empty");
+    try {
+      await page.getByRole("button", { name: /通ったのに、違う/ }).click();
+      await page.getByRole("button", { name: "03 正しさを確かめる" }).click();
+      const inspector = page.getByRole("complementary", { name: "独立検証の説明" });
+      await browserExpect(inspector.locator(".outcome").filter({ hasText: "元のアサーション" })).toContainText("PASS");
+      await browserExpect(inspector.locator(".outcome").filter({ hasText: "独立した状態検証" })).toContainText("FAIL");
+      await browserExpect(inspector).toContainText("実際のモデルの応答ではありません");
+      await browserExpect(page.locator(".sidebar-providers")).toContainText("未比較");
+      await page.getByRole("button", { name: "画面", exact: true }).click();
+      expect(new URL(page.url()).searchParams.get("example")).toBe("wrong-target");
+      expect(new URL(page.url()).searchParams.get("step")).toBe("2");
+      expect(new URL(page.url()).searchParams.get("view")).toBe("preview");
+      await page.reload();
+      await browserExpect(page.getByRole("button", { name: /通ったのに、違う/ })).toHaveAttribute("aria-pressed", "true");
+      await browserExpect(page.frameLocator('iframe[title="AFTER 静的画面"]').getByRole("button", { name: "注文を確定" })).toBeVisible();
+      await page.getByRole("button", { name: /修復しない判断/ }).click();
+      await page.getByRole("button", { name: "差分", exact: true }).click();
+      await browserExpect(page.locator(".stop-note")).toContainText("NO_REPAIR");
+      await browserExpect(page.locator(".example-editor .added")).toHaveCount(0);
+      await page.getByRole("button", { name: "最初から見る" }).click();
+      await browserExpect(page.getByRole("button", { name: "01 失敗をとらえる" })).toHaveAttribute("aria-pressed", "true");
     } finally { await page.close(); }
   });
 
@@ -129,8 +174,8 @@ describe("recorded-only comparison demo", () => {
   });
 
   it("has no horizontal page overflow on narrow screens and respects reduced motion", async () => {
-    for (const name of ["empty", "recorded"]) {
-      const page = await open(name, { width: 375, height: 812 });
+    for (const [name, width] of [["empty", 320], ["empty", 375], ["empty", 768], ["recorded", 320], ["recorded", 375], ["recorded", 768]] as const) {
+      const page = await open(name, { width, height: 812 });
       try {
         await browserExpect(page.getByRole("heading", { level: 1 })).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -139,6 +184,32 @@ describe("recorded-only comparison demo", () => {
         await browserExpect(page.getByRole("heading", { name: /ブラウザでは、読む。/ })).toBeVisible();
       } finally { await page.close(); }
     }
+  });
+
+  it("keeps small text and status colors readable in both themes", async () => {
+    const page = await open("empty");
+    try {
+      for (const theme of ["dark", "light"]) {
+        await browserExpect(page.locator("html")).toHaveAttribute("data-theme", theme);
+        const tokens = await page.evaluate(() => {
+          const styles = getComputedStyle(document.documentElement);
+          return Object.fromEntries(["ink", "muted", "page", "surface", "accent", "accent-soft", "positive", "positive-bg", "negative", "negative-bg", "warning", "warning-bg"].map((name) => [name, styles.getPropertyValue(`--${name}`).trim()]));
+        });
+        function luminance(hex: string): number {
+          const value = hex.length === 4 ? [...hex.slice(1)].map((digit) => digit.repeat(2)).join("") : hex.slice(1);
+          const channels = value.match(/.{2}/g)!.map((pair) => {
+            const channel = parseInt(pair, 16) / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+          return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722;
+        }
+        for (const [text, background] of [["ink", "page"], ["muted", "surface"], ["accent", "accent-soft"], ["positive", "positive-bg"], ["negative", "negative-bg"], ["warning", "warning-bg"]]) {
+          const levels = [luminance(tokens[text!]!), luminance(tokens[background!]!)].sort((a, b) => a - b);
+          expect((levels[1]! + 0.05) / (levels[0]! + 0.05), `${theme}: ${text}/${background}`).toBeGreaterThanOrEqual(4.5);
+        }
+        if (theme === "dark") await page.getByRole("button", { name: "ライトモードに切り替える" }).click();
+      }
+    } finally { await page.close(); }
   });
 
   it("reports malformed data explicitly instead of silently presenting an empty benchmark", async () => {
