@@ -8,6 +8,11 @@ const illustrativeBefore = `<main><h1>通知の設定</h1><p>メールで受け�
 const illustrativeAfter = `<main><h1>通知の設定</h1><p>メールで受け取る通知を設定します。</p><label for="email">メールアドレス</label><input id="email" value="you@example.test"><button>変更を保存</button></main>`;
 const illustrativeOriginal = `await page.getByRole('button', { name: '保存', exact: true }).click();\nawait expect(page.getByRole('status')).toHaveText('保存しました');`;
 const illustrativeRepaired = `await page.getByRole('button', { name: '変更を保存', exact: true }).click();\nawait expect(page.getByRole('status')).toHaveText('保存しました');`;
+const examples = [
+  { id: "rename", title: "ボタン名の変更", file: "notifications.spec.ts", kind: "Locator not found", description: "保存 → 変更を保存", before: illustrativeBefore, after: illustrativeAfter, original: illustrativeOriginal, repaired: illustrativeRepaired, target: "変更を保存", context: "通知の設定", result: "修復できる例", assertion: true, oracle: true, targetCorrect: true, detail: "同じ通知設定を保存する操作です。ロケータだけを変え、期待値はそのままにします。" },
+  { id: "wrong-target", title: "通ったのに、違う", file: "checkout.spec.ts", kind: "Wrong target", description: "テストの緑化 ≠ 修復成功", before: '<main><h1>注文の確認</h1><p>注文内容を確認してください。</p><button>確定する</button></main>', after: '<main><h1>注文の確認</h1><p>注文と見積もりでは保存先が異なります。</p><button>見積もりを保存</button><button>注文を確定</button></main>', original: "await page.getByRole('button', { name: '確定する', exact: true }).click();\nawait expect(page.getByRole('status')).toHaveText('完了しました');", repaired: "await page.getByRole('button', { name: '見積もりを保存', exact: true }).click();\nawait expect(page.getByRole('status')).toHaveText('完了しました');", target: "見積もりを保存", context: "注文の確認", result: "修復を却下する例", assertion: true, oracle: false, targetCorrect: false, detail: "見積もり保存でも「完了しました」は表示できます。しかし注文は作成されません。緩いアサーションを独立検証で補います。" },
+  { id: "missing", title: "修復しない判断", file: "coupon.spec.ts", kind: "No matching target", description: "機能がなくなったら、止まる", before: '<main><h1>クーポン</h1><p>注文に割引を適用します。</p><button>適用する</button></main>', after: '<main><h1>クーポン</h1><p>クーポンの受け付けは終了しました。</p><button>注文に戻る</button></main>', original: "await page.getByRole('button', { name: '適用する', exact: true }).click();\nawait expect(page.getByRole('status')).toHaveText('適用しました');", repaired: undefined, target: "NO_REPAIR", context: "クーポンの受け付け終了", result: "修復しない例", assertion: null, oracle: null, targetCorrect: null, detail: "「注文に戻る」は代わりの操作先ではありません。対応する対象がない場合は、書き換えずに停止します。" },
+] as const;
 const walkthrough = [
   { label: "失敗をとらえる", headline: "名前が変わる。テストが止まる。", body: "「保存」が「変更を保存」に変わると、元のロケータは対象を見つけられません。操作の目的は、そのままです。", note: "BEFORE → AFTER", detail: "画面は説明用の静的スナップショットです。ボタンを押しても処理は実行されません。" },
   { label: "候補から選ぶ", headline: "書き直すのは、ロケータだけ。", body: "コードが抽出した候補と周辺文脈を各方式に渡します。返すのは候補ID、NO_REPAIR、ABSTAINのいずれか。モデルはコードを書きません。", note: "LIMITED CHOICES", detail: "説明例の候補 c0: button「変更を保存」／文脈「通知の設定」。この例は実際のproviderの応答ではありません。" },
@@ -31,18 +36,20 @@ function Header() {
   const [dark, setDark] = useState(() => {
     try {
       const preference = localStorage.getItem("repair-lab-theme");
-      return preference ? preference === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-    } catch { return false; }
+      return preference !== "light";
+    } catch { return true; }
   });
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0e1219" : "#f2f4f8");
     try { localStorage.setItem("repair-lab-theme", dark ? "dark" : "light"); } catch { /* Storage can be disabled by browser policy. */ }
   }, [dark]);
   return <header className="site-header">
     <a href="#main" className="brand" aria-label="Jev Repair Lab ホーム">
-      <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span>
-      <span>jev <span className="brand-divider">/</span> <span className="brand-sub">repair lab</span></span>
+      <span className="brand-mark" aria-hidden="true"><Icon name="code" /></span>
+      <span translate="no">Jev <span className="brand-sub">Repair Lab</span></span>
     </a>
+    <span className="header-context">Playwright / locator repair</span>
     <nav aria-label="メインナビゲーション">
       <a href="#explore" className="nav-explore">ラボを見る</a>
       <a href="#reproduce">再現する</a>
@@ -79,24 +86,77 @@ function CodeDiff({ original, repaired, explanation = false }: { original: strin
 }
 
 function Walkthrough() {
-  const [step, setStep] = useState(0);
+  function readLocation() {
+    const params = new URLSearchParams(location.search);
+    return {
+      exampleId: examples.find((example) => example.id === params.get("example"))?.id ?? "rename",
+      step: ["0", "1", "2"].includes(params.get("step") ?? "") ? Number(params.get("step")) : 1,
+      view: params.get("view") === "preview" ? "preview" as const : "diff" as const,
+    };
+  }
+  const [selection, setSelection] = useState(readLocation);
+  const { step, view } = selection;
+  const example = examples.find((item) => item.id === selection.exampleId) ?? examples[0];
+  useEffect(() => {
+    const restore = () => setSelection(readLocation());
+    addEventListener("popstate", restore);
+    return () => removeEventListener("popstate", restore);
+  }, []);
+  function select(next: typeof selection) {
+    setSelection(next);
+    const url = new URL(location.href);
+    url.searchParams.set("example", next.exampleId);
+    url.searchParams.set("step", String(next.step));
+    url.searchParams.set("view", next.view);
+    history.replaceState(null, "", url);
+  }
   const current = walkthrough[step]!;
-  return <section id="explore" className="section">
-    <SectionHeading number="01" label="HOW IT WORKS" title="小さな変更から、修復の境界を見る。"><span className="badge warning">説明用・実測ではありません</span></SectionHeading>
-    <div className="lab-panel">
-      <div className="steps" role="group" aria-label="修復の説明ステップ">
-        {walkthrough.map((item, i) => <button type="button" key={item.label} onClick={() => setStep(i)} aria-pressed={i === step} className={`step ${i === step ? "active" : ""}`}><span className="step-number">0{i + 1}</span><span>{item.label}</span><Icon name="arrow" /></button>)}
+  return <section id="explore" className="workbench" aria-label="修復ワークベンチ">
+    <div className="workbench-toolbar"><div><Icon name="code" /><h2>修復ワークベンチ</h2><span className="workspace-mode">ガイド</span></div><span className="badge warning">説明用・実測ではありません</span></div>
+    <div className="workspace-grid">
+      <aside className="case-sidebar" aria-label="説明ケース">
+        <div className="sidebar-heading"><h3>ケース</h3><span>3 examples</span></div>
+        <div className="case-list">{examples.map((item) =>
+          <button type="button" key={item.id} aria-pressed={item.id === example.id} className={`case-button ${item.id === example.id ? "active" : ""}`} onClick={() => select({ ...selection, exampleId: item.id })}>
+            <span className={`case-indicator ${item.id}`} aria-hidden="true" /><span><strong>{item.title}</strong><small>{item.description}</small></span>
+          </button>,
+        )}</div>
+        <div className="sidebar-providers"><h3>比較する判断役</h3><ul><li><span className="provider-dot rule" />ルール<span>未比較</span></li><li><span className="provider-dot azure" />GPT-5.5<span>未比較</span></li><li><span className="provider-dot jev" />Jev<span>未比較</span></li></ul><p>同じ候補、同じ文脈。<br />選ぶ部分だけを交換します。</p></div>
+        <a className="sidebar-link" href={`${repository}/tree/main/fixtures`} target="_blank" rel="noreferrer">検証用の60ケースを見る<Icon name="external" /></a>
+      </aside>
+      <div className="editor-pane">
+        <div className="editor-toolbar"><span className="file-label" translate="no"><span className="ts-icon">TS</span>{example.file}</span><div className="view-switch" role="group" aria-label="表示内容"><button type="button" aria-pressed={view === "diff"} onClick={() => select({ ...selection, view: "diff" })}>差分</button><button type="button" aria-pressed={view === "preview"} onClick={() => select({ ...selection, view: "preview" })}>画面</button></div></div>
+        <div className="steps" role="group" aria-label="修復の説明ステップ">
+          {walkthrough.map((item, i) => <button type="button" key={item.label} onClick={() => select({ ...selection, step: i })} aria-pressed={i === step} className={`step ${i === step ? "active" : ""}`}><span className="step-number">0{i + 1}</span><span>{item.label}</span></button>)}
+        </div>
+        <div className="walkthrough-copy" aria-live="polite"><h3>{example.id === "rename" ? current.headline : example.title}</h3><p>{example.id === "rename" ? current.body : example.detail}</p></div>
+        {view === "diff" ? <div className="example-editor">
+          <div className="editor-section-heading"><span>{step === 0 ? "失敗したロケータ" : "ロケータだけを変更"}</span><span className="badge">{step === 0 ? "変更前" : "変更案の説明"}</span></div>
+          <pre aria-label="説明用のテスト差分"><code>
+            <span className="code-line code-context"><span className="line-number">1</span><span><b>test</b>(<em>'{example.title}'</em>, async (&#123; page &#125;) =&gt; &#123;</span></span>
+            <span className="code-line removed"><span className="line-number">2</span><span className="diff-sign">−</span><span>{example.original.split("\n")[0]}</span></span>
+            {step > 0 && example.repaired && <span className="code-line added"><span className="line-number">2</span><span className="diff-sign">+</span><span>{example.repaired.split("\n")[0]}</span></span>}
+            <span className="code-line code-context"><span className="line-number">3</span><span>{example.original.split("\n")[1]}</span></span>
+            <span className="code-line code-context"><span className="line-number">4</span><span>&#125;);</span></span>
+          </code></pre>
+          <div className="assertion-lock"><Icon name="shield" /><span>アサーション・期待値・操作引数は変更しない</span></div>
+          {step > 0 && !example.repaired && <div className="stop-note"><strong>NO_REPAIR</strong><p>対応する操作先がないため、コードは変更しません。</p></div>}
+          <div className="diagnostic"><div><span className="diagnostic-symbol">!</span><strong>{step === 0 ? "Locator not found" : example.id === "rename" ? "変更案の確認ポイント" : example.kind}</strong><span>説明例</span></div><p>{step === 0 ? "元の名前では、操作先を一意に見つけられません。" : example.detail}</p><code>{example.original.split("\n")[0]}</code></div>
+        </div> : <div className="preview-pane"><div className="snapshots"><Snapshot label="BEFORE" caption="変更前の説明画面" source={example.before} /><Snapshot label="AFTER" caption="変更後の説明画面" source={example.after} /></div><p className="snapshot-disclaimer muted">説明用の静的画面です。ボタン操作・推論・テストは実行しません。</p></div>}
+        <div className="editor-bottom"><span><span className="status-dot" />ロケータ限定</span><span>TypeScript</span><span>読み取り専用</span></div>
       </div>
-      <div className="walkthrough-copy" aria-live="polite"><div><p className="eyebrow">{current.note}</p><h3>{current.headline}</h3></div><p>{current.body}</p></div>
-      <div className="snapshots"><Snapshot label="BEFORE" caption="変更前" source={illustrativeBefore} /><Snapshot label="AFTER" caption="変更後" source={illustrativeAfter} /></div>
-      <div className="walkthrough-note"><Icon name="shield" /><p>{current.detail}</p></div>
-      <CodeDiff original={illustrativeOriginal} repaired={illustrativeRepaired} explanation />
+      <aside className="inspector" aria-label="独立検証の説明">
+        <div className="inspector-heading"><Icon name="shield" /><h3>検証結果</h3><span>説明例</span></div>
+        <div className="inspection-summary"><span className={`inspection-symbol ${step === 2 && example.oracle === false ? "failure" : ""}`} aria-hidden="true">{step < 2 ? "?" : example.oracle === false ? "×" : example.oracle === true ? "✓" : "—"}</span><strong>{step < 2 ? "通るだけでは、足りない。" : example.result}</strong><p>{step < 2 ? "テストと実際の状態を、別々に確かめます。" : example.detail}</p></div>
+        <Outcome label="元のアサーション" value={step === 2 ? example.assertion : null} note="期待値を変更せずに確認" />
+        <Outcome label="独立した状態検証" value={step === 2 ? example.oracle : null} note="アプリの結果は正しいか" />
+        <Outcome label="操作先の正しさ" value={step === 2 ? example.targetCorrect : null} note="本来の対象を選んだか" />
+        <div className="selection-note"><span>選択内容の説明</span><code>{step === 0 ? "まだ選択しません" : example.target}</code><p>{step === 0 ? "次のステップで変更案を確認できます。" : example.context}</p></div>
+        <p className="inspector-disclaimer">実際のモデルの応答ではありません。速度・費用・成功率は未掲載です。</p>
+        <button type="button" className="next-step" onClick={() => select({ ...selection, step: (step + 1) % walkthrough.length })}>{step === 2 ? "最初から見る" : step === 0 ? "変更案を見る" : "独立検証を見る"}<Icon name="arrow" /></button>
+      </aside>
     </div>
-    <div className="principles">
-      <article><span className="principle-index">A / SAME INPUT</span><h3>選択の部分だけを交換</h3><p>ルール・Azure OpenAI・Jevに、同じ候補と文脈を。抽出と検証は共通です。</p></article>
-      <article><span className="principle-index">B / SMALL PATCH</span><h3>直せる範囲を、狭くする</h3><p>候補IDからコードが最小差分を作成。任意コード生成やテストの削除は対象外です。</p></article>
-      <article><span className="principle-index">C / SAFE TO STOP</span><h3>直さない、も大事な判断</h3><p>対象がなければ NO_REPAIR。曖昧なら ABSTAIN。対応外の構文はガードで停止します。</p></article>
-    </div>
+    <div className="workbench-footer"><span>ブラウザ内の説明表示</span><span>API呼び出しなし<span className="footer-separator" />実測データと分離</span></div>
   </section>;
 }
 
@@ -188,17 +248,16 @@ export function App({ dataset }: { dataset: PublicDataset }) {
     <a href="#main" className="skip-link">本文へスキップ</a>
     <div className="site-shell"><Header />
       <main id="main">
-        <section className="hero">
-          <div className="hero-copy"><p className="eyebrow"><span className="live-dot" /> AN EXPERIMENT IN TEST REPAIR</p><h1>テストを緑にするだけでは、<br /><span>修復とは呼べない。</span></h1><p className="hero-description">そのロケータは、本当に正しい操作先を指しているか。<br className="desktop-break" />ルール・通常LLM・Jevで、Playwright修復の「中身」を確かめる。</p><div className="hero-actions"><a className="primary-button" href="#explore">{empty ? "修復のしくみを見る" : "保存済み結果を見る"} <Icon name="arrow" /></a><span className="hero-caption">LOCATOR ONLY. ASSERTIONS INTACT.</span></div></div>
-          <div className="hero-diagram" aria-label="元のテストのロケータだけを修復し、テストとoracleを別々に検証する"><div className="diagram-top"><span className="mono">test.spec.ts</span><span className="badge">locator-only</span></div><div className="diagram-code"><span className="muted">getByRole('button', &#123;</span><span className="diagram-removed">− name: '保存'</span><span className="diagram-added">+ name: '変更を保存'</span><span className="muted">&#125;).click()</span></div><div className="diagram-divider"><span />修復のあとに、ふたつの問い<span /></div><div className="diagram-checks"><div><Icon name="check" /><span>テストは通る？<small>ORIGINAL ASSERTIONS</small></span></div><div><Icon name="shield" /><span>操作は正しい？<small>INDEPENDENT ORACLE</small></span></div></div><p>説明用の差分 / 実測ではありません</p></div>
+        <section className="workspace-intro">
+          <div><h1>テストは通った。<span>本当に直った？</span></h1><p>ルール・GPT-5.5・Jev。操作先を選ぶ判断を交換し、修復の正しさを確かめる。</p></div>
+          <a className="button-link" href={`${repository}#local-workflow`} target="_blank" rel="noreferrer"><Icon name="code" />ローカルで試す<Icon name="external" /></a>
         </section>
         <section className="collection-status" aria-label="データ収集状況">
-          <div className="collection-main"><span className={`status-dot ${empty ? "pending" : ""}`} /><div><span className="small-label">DATA STATUS</span><h2>{empty ? "未収集" : live ? "記録を公開中" : "API 実測は未収集"}</h2></div><p>{empty ? "実APIの結果は、まだありません。方式の優劣を示す数値は掲載していません。" : `${dataset.trials.length} 件の保存済み試行。API 実測 ${live} 件 / 決定論的実行 ${dataset.trials.length - live} 件。`}</p></div>
-          <div className="collection-fact"><span className="small-label">EXECUTION</span><strong>ローカル CLI のみ</strong><span>このページから API を呼びません</span></div>
-          <div className="collection-fact"><span className="small-label">PUBLICATION</span><strong>{dataset.publicationApproved ? "公開承認済み" : "実測公開待ち"}</strong><span>{empty ? "説明と実測を、混ぜない" : "保存記録をそのまま確認"}</span></div>
+          <div className="collection-main"><span className={`status-dot ${empty ? "pending" : ""}`} /><span>API比較</span><h2>{empty ? "未収集" : live ? "記録を公開中" : "API 実測は未収集"}</h2><p>{empty ? "まずは説明ケースで、修復と検証の流れを確認できます。" : `${dataset.trials.length} 件の保存済み試行。API 実測 ${live} 件 / 決定論的実行 ${dataset.trials.length - live} 件。`}</p></div>
+          <span className="collection-detail">{dataset.publicationApproved ? "公開承認済みの記録" : "方式の優劣・性能値は未掲載"}</span>
         </section>
         {empty ? <Walkthrough /> : <Results dataset={dataset} />}
-        <div className="limitations"><Icon name="shield" /><div><strong>これは「どんなテストでも直す」デモではありません。</strong><p>自作fixtureと限定された構文が対象です。汎用的な優位性、すべての不具合の検出、誤修復ゼロを保証しません。ガードによる停止はモデルの判断能力と区別します。</p></div></div>
+        <div className="principles"><article><Icon name="code" /><div><h3>選ぶ部分だけを交換</h3><p>候補の抽出と検証は共通。判断役に同じ候補・文脈を渡します。</p></div></article><article><Icon name="shield" /><div><h3>直せるのは、ロケータだけ</h3><p>アサーションはそのまま。対象なし・曖昧な場合は停止できます。</p></div></article><article><Icon name="check" /><div><h3>成功を、独立して検証</h3><p>自作fixtureと限定構文が対象。汎用的な安全性を保証するものではありません。</p></div></article></div>
         <Reproduce />
       </main>
       <footer className="site-footer"><div><strong>jev / repair lab</strong><p>正しい修復を、確かめる。</p></div><div className="footer-meta"><span>{dataset.label}</span><span>Schema v{dataset.schemaVersion} · generated: {dataset.generatedAt ?? "未生成"}</span><span className="sha">Source SHA: {dataset.sourceSha ?? "未記録"}</span><a href={`${repository}/blob/main/LICENSE`} target="_blank" rel="noreferrer">MIT License ↗</a></div></footer>
