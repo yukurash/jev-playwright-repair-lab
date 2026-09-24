@@ -1,0 +1,41 @@
+{
+  "name": "jev-playwright-repair-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "verify": "npm run typecheck && npm test && npm run build:demo && npm run check:public",
+    "doctor": "tsx packages/cli/src/index.ts doctor",
+    "capture": "tsx packages/cli/src/index.ts capture",
+    "repair": "tsx packages/cli/src/index.ts repair",
+    "freeze": "tsx packages/cli/src/index.ts freeze",
+    "evaluate": "tsx packages/cli/src/index.ts evaluate",
+    "summarize": "tsx packages/cli/src/index.ts summarize",
+    "export:public": "tsx packages/cli/src/index.ts export-public",
+    "check:public": "tsx scripts/check-public.ts",
+    "build:demo": "npm run build --workspace @repair-lab/demo",
+    "preview:demo": "npm run preview --workspace @repair-lab/demo --"
+  },
+  "dependencies": {
+    "@azure/identity": "4.13.3",
+    "@playwright/test": "1.61.1",
+    "@typesafe-ai/sdk": "0.6.0",
+    "openai": "7.17.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tsx": "4.23.13",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}

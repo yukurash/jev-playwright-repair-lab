@@ -1,0 +1,272 @@
+# Decision providers and the private budget ledger
+
+Only local Node.js code calls models. The public demo, CI, and the rule provider do
+not call model services. There is no provider failover, inferred answer, synthetic
+usage, or automatic retry. All examples below are configuration instructions,
+**not evidence that a live call or access check has succeeded**.
+
+## Public TypeScript API
+
+```ts
+import {
+  createProvider, loadConfiguration, inspectConfiguration, BudgetLedger,
+  type ProviderConfiguration,
+} from "@repair-lab/providers";
+
+const rule = createProvider("rule");
+const config: ProviderConfiguration = await loadConfiguration(absolutePrivateConfigPath);
+const provider = createProvider("azure", config); // or "jev"
+const result = await provider.decide(request);
+```
+
+- `createProvider(id: ProviderId, config?: ProviderConfiguration): DecisionProvider`
+  implements the `@repair-lab/core` contract.
+- `loadConfiguration(path: string): Promise<ProviderConfiguration>` reads an
+  explicitly selected file outside the public repository, rejects unknown fields,
+  validates prices and paths, and acquires no credentials.
+- `inspectConfiguration(path?: string): Promise<ConfigurationInspection>` is a
+  **read-only doctor**: no model listing, credential acquisition, network requests,
+  directory creation, initialization, or charge. Without a path it reports
+  rule-only readiness. It reports approval issues, environment-key presence
+  (never its value), budget totals, unresolved reservations, locks, and call limits.
+  `ready` means local prerequisites only; it does not prove live access, current
+  billing, model availability, or structured-output compatibility.
+- `BudgetLedger(path, capUsd = 10)` exposes `initialize()`, `inspect()`,
+  `reserve(provider, maximumUsd, inputTokenLimit, outputTokenLimit, maxCalls?)`,
+  `settle(id, actualUsd, usage)`, `markUnknown(id, code)`, and
+  `reconcile(id, actualUsd, evidence)`.
+- `ProviderError` has `code` and optional `reservationId`. Error messages do not
+  forward provider response bodies, endpoint names, keys, or SDK exception text.
+- `DEFAULT_LEDGER_PATH`, `AZURE_TOKEN_SCOPE`, `JEV_MODEL`, `MAX_BUDGET_USD`,
+  `committedNanos`, and the configuration/ledger types are also exported.
+
+There is deliberately no unbudgeted smoke-test method. A live smoke test must use
+the same `createProvider(...).decide(...)` path.
+
+## Identical decision task
+
+All three providers receive the same request. A strict allowlist rebuilds its
+intent, operation, old locator/context, and candidate IDs/locators/contexts before
+passing it to core `decisionContext`. `caseId`, runtime-added oracle properties,
+and evaluation labels are not serialized. Input page text remains untrusted data.
+
+Azure and Jev use core `DECISION_INSTRUCTION` without provider-specific hints.
+Their allowed decisions are the candidate IDs plus `NO_REPAIR` and `ABSTAIN`.
+No explanation or replacement code is requested. Any out-of-set choice,
+unexpected answer shape, refusal, incomplete result, model mismatch, or missing
+usage is an error, **not** an abstention or successful result.
+
+### Rule baseline: `deterministic-lexical-v1`
+
+Filter candidates by operation-compatible control kind. Rank by:
+
+1. Normalized exact accessible-name/label equality: 4 points.
+2. Word-set Jaccard overlap between the old name plus intent and candidate name:
+   up to 2 points.
+3. Word-set Jaccard overlap between old and candidate context: up to 1 point.
+4. Exact nonempty old scope match: 1 point.
+
+Normalization is NFKC, lowercase, and trimming; words are Unicode letter/number
+runs. No compatible candidate or a zero top score returns `NO_REPAIR`; equal top
+scores return `ABSTAIN`; otherwise choose the top candidate. Ties are never broken
+using a case ID, an oracle, or arbitrary candidate order. This intentionally simple
+lexical baseline is not claimed to be a semantic repair system.
+
+### Azure GPT-5.5
+
+The official `openai@7.17.0` client calls
+`https://<resource>.openai.azure.com/openai/v1/chat/completions` (the documented
+`services.ai.azure.com` resource-origin form is also accepted).
+`@azure/identity@4.13.3` supplies `AzureCliCredential` with an explicit tenant and
+`getBearerTokenProvider(..., "https://ai.azure.com/.default")`.
+
+Use the already approved **deployment/model `gpt-5.5`, version `2026-04-24`**.
+This adapter rejects configuration that substitutes a different deployment/model;
+it does not provision resources, change deployment settings, or silently select
+another model. Reported response models must match the selected model or its
+dated version. `modelVersion` records the configured, externally verified
+deployment version; an undated response name is not independent version proof.
+
+Chat completions use `response_format: { type: "json_schema", json_schema: {
+strict: true, ... } }` with one `choice` property, a finite string enum,
+`required: ["choice"]`, and `additionalProperties: false`. There is one completion,
+no streaming, no tools, and `store: false`. No reasoning-effort setting is guessed
+or changed. `max_completion_tokens` bounds visible output **and reasoning tokens**.
+The adapter requires valid prompt/completion/total token counts, reasoning token
+details, and cached-input details. Cached input is conservatively costed at the
+full configured input rate; reasoning is included in completion usage, not billed
+twice.
+
+### Jev Choice
+
+The official `@typesafe-ai/sdk@0.6.0` client sends one `choice(...)` question to
+`https://api.typesafe.ai/v1/systemone`, explicitly pinned to `jev-1.13.0`.
+`state` is the same serialized core context; the question's instructions are the
+same instruction, and criteria map every allowed decision to `null`.
+
+The result records Choice, full probabilities, confidence, usage, returned model,
+and the available request ID. Probability keys/ranges/sum and confidence range
+are validated. **Confidence never changes the primary decision or triggers a
+threshold/fallback. It is descriptive, not a measured correctness probability.**
+
+The current official model documentation says input tokens are billed and output
+tokens are free. Jev has no documented `max_output_tokens` request parameter.
+Therefore this adapter requires a verified zero output-token price, bounds the
+finite choice set to 255 options (253 candidates plus two reserved choices), limits
+response bytes and observed output usage, and refuses changed billing assumptions.
+It does not invent an unsupported server-side output limit. The one-question
+input allowance must be at most 32,000 tokens.
+
+## Private configuration
+
+Create the config outside the checkout, normally in the sibling directory:
+
+```text
+jev-playwright-repair-lab-private\
+  local-config\providers.json
+  budget.json
+  runs\raw-provider-responses\       # optional
+```
+
+All live configurations must use **the same fixed sibling `budget.json` path**,
+resolved from this checkout, not a per-provider/per-run ledger. Do not rename,
+delete, replace, move, reset, or switch the ledger to regain budget. Keep a durable
+private backup. This local guard cannot police manual calls from other clients,
+deliberate file edits, disk loss, or separate project copies.
+
+The following is the exact schema with placeholders. Replace angle-bracket
+placeholders locally. Price placeholders intentionally make the example
+**invalid until replaced by verified JSON numbers**. The Jev value shown is from
+the cited official page, not confirmation of your account's applicable terms.
+Keep approvals false until the project owner confirms current applicable pricing,
+model/API access, and permission to run/publish the experiment.
+
+```json
+{
+  "schemaVersion": 1,
+  "ledgerPath": "C:\\Users\\<YOU>\\claude\\jev-playwright-repair-lab-private\\budget.json",
+  "budgetUsd": 10,
+  "approvals": {
+    "pricingVerified": false,
+    "accessConfirmed": false,
+    "publicationApproved": false
+  },
+  "limits": {
+    "maxSerializedBytes": 6000,
+    "maxInputTokens": 32000,
+    "inputTokenOverhead": 2048,
+    "maxOutputTokens": 1024,
+    "maxResponseBytes": 131072,
+    "timeoutMs": 30000,
+    "maxCalls": 500
+  },
+  "azure": {
+    "endpoint": "https://<EXISTING-RESOURCE>.openai.azure.com",
+    "tenantId": "<EXISTING-TENANT-UUID>",
+    "deployment": "gpt-5.5",
+    "model": "gpt-5.5",
+    "modelVersion": "2026-04-24",
+    "pricing": {
+      "inputUsdPerMillion": "<VERIFIED-NUMBER>",
+      "outputUsdPerMillion": "<VERIFIED-NUMBER>",
+      "fixedUsdPerRequest": "<VERIFIED-NUMBER>",
+      "source": "<OFFICIAL-PRICE-URL-OR-ACCOUNT-PRICE-REFERENCE>",
+      "verifiedAt": "<ISO-8601-DATE>"
+    }
+  },
+  "jev": {
+    "model": "jev-1.13.0",
+    "pricing": {
+      "inputUsdPerMillion": 0.042,
+      "outputUsdPerMillion": 0,
+      "fixedUsdPerRequest": "<VERIFIED-NUMBER>",
+      "source": "https://docs.typesafe.ai/models",
+      "verifiedAt": "<ISO-8601-DATE>"
+    }
+  },
+  "rawResponseDirectory": "C:\\Users\\<YOU>\\claude\\jev-playwright-repair-lab-private\\runs\\raw-provider-responses"
+}
+```
+
+Either live-provider section may be omitted. `rawResponseDirectory` is optional;
+omit it to disable raw response files. The Azure endpoint, tenant, local paths,
+raw responses, and request IDs must remain private unless separately reviewed.
+Raw files include the response and reservation ID only, not request headers or
+credentials. Paths and existing ancestors are resolved to reject symlink/junction
+routes back into the public repository.
+
+Provide the Jev key only through the local process environment
+`TYPESAFE_API_KEY`. Never place a key in JSON, command history, a chat message, a
+test fixture, the public demo, Git, or an Actions secret for live PR execution.
+The SDK's environment base-URL/model/logging overrides are not used: the adapter
+explicitly fixes these settings and disables SDK logs.
+
+## Budget protocol and recovery
+
+1. After verifying this is a new project ledger, initialize it **once**, explicitly:
+   `await new BudgetLedger(config.ledgerPath, config.budgetUsd).initialize()`.
+   Initialization is exclusive and refuses to overwrite an existing file.
+   A missing previously used ledger requires recovery from its durable backup,
+   not a new zero balance.
+2. Validate the config, approvals, input, and credential presence. Limit the full
+   JSON payload including instruction, question/schema, all candidates, and
+   serialization overhead. A deliberately pessimistic four tokens per UTF-8 byte
+   plus configured framing allowance must fit the input-token allowance.
+3. Hold an exclusive filesystem lock while reading and atomically updating the
+   ledger. Reserve the **full configured input allowance**, maximum output
+   allowance, and any fixed request charge at verified rates. Amounts are rounded
+   upward to integer nanodollars. The cap is at most USD 10 across **both providers,
+   development, smoke calls, evaluation, and explicit retries**.
+4. Persist and flush the reservation before acquiring Azure tokens or sending a
+   model request. One unresolved reservation blocks other processes/providers;
+   a process-wide guard also enforces concurrency one.
+5. Both SDKs set retries to zero on the client and request. The transport also
+   rejects a second attempt, unexpected URL/method, and HTTP redirects. It bounds
+   response bytes. A total deadline aborts the call and includes credential wait.
+6. Settle only complete validated responses with valid usage within the reserved
+   bounds. The estimate includes reasoning at the output rate and assumes no cache
+   discount. A successful `NO_REPAIR` or `ABSTAIN` is still a billed decision.
+7. **Every post-reservation failure** (including timeout, authentication, refusal,
+   malformed choice, unknown usage, or raw-record write failure) retains its
+   maximum reservation and blocks all further calls. Crashes leave `reserved`
+   entries, which also block. No automatic release is possible.
+8. Recover only after confirming final provider billing **and that the request
+   has terminated**, then explicitly call
+   `await ledger.reconcile(reservationId, verifiedActualUsd, privateEvidence)`.
+   Reconciliation is a human-audited operation, not a retry/recovery heuristic.
+   A verified charge above the cap is preserved and permanently prevents further
+   reservations. Never reconcile to zero merely because an HTTP request failed.
+9. Locks are never auto-expired or stolen. For a crash lock, first verify the
+   recorded process and any in-flight request are no longer running; preserve the
+   ledger/evidence, remove only that confirmed stale lock, and reconcile any
+   unresolved reservation. If unsure, stop.
+
+Changing an existing cap is rejected. Calls, including failed calls, count toward
+the durable `maxCalls` limit. The serialized-byte/token allowances are conservative
+engineering bounds, not a universal tokenizer proof; if observed usage violates
+them, stop and reconcile. Current pricing, service-side enforcement, other
+clients, and the final invoice are outside this code's control: the ledger is a
+fail-closed estimate guard, **not a guarantee of the provider's final bill**.
+
+## Validation and first-party references
+
+`npm test -- packages/providers/src/providers.test.ts` tests the real pinned SDKs
+with **mocked HTTP transport and mocked Azure credentials**, no model calls.
+Scratch directories are unique children of the provider source folder and are
+removed after each test (not OS temporary directories). Tests cover persistence,
+exclusive reservations, cap/call limits, unknown billing, malformed choices,
+refusal, input limits, low-confidence Jev decisions, usage/reasoning accounting,
+timeouts, retries, and global concurrency.
+
+Verified against these first-party documents and installed SDK declarations:
+
+- [Azure v1 endpoint and Entra scope](https://learn.microsoft.com/azure/foundry/openai/api-version-lifecycle)
+- [Azure endpoint switching and deployment names](https://learn.microsoft.com/azure/foundry-classic/openai/how-to/switching-endpoints)
+- [TypeSafe JavaScript SDK](https://docs.typesafe.ai/sdk/javascript)
+- [TypeSafe SDK v0.6.0 request/retry/result types](https://github.com/typesafe-ai/typesafe-sdk-js/blob/v0.6.0/src/types.ts)
+- [TypeSafe Choice HTTP API and usage](https://docs.typesafe.ai/api)
+- [Jev pinned model, input-only billing, and context limits](https://docs.typesafe.ai/models)
+
+SDK versions, the actual returned model string, source/data/config fingerprints,
+and local verification dates should be recorded by the experiment runner. Do not
+publish these tests' mocked responses or rates as measured experiment results.
