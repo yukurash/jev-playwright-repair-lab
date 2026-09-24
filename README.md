@@ -3,8 +3,11 @@
 Build a locator-only Playwright repair tool and compare deterministic rules,
 Azure OpenAI GPT-5.5, and Jev on the same finite choices.
 
-No model benchmark results have been collected yet. A passing test alone
-does not count as a successful repair:
+The first **GPT-5.5-only** evaluation is recorded: 108 final trials, including
+90 API decisions and 18 deterministic guards. Jev has not been measured, and
+this release is not a model-to-model comparison. See the
+[measured results and limitations](docs/gpt-5.5-results.md).
+A passing test alone does not count as a successful repair:
 an independent target and application-state check must also pass.
 
 The public demo will replay recorded, sanitized results without API keys.
@@ -120,9 +123,10 @@ successful repair or an unannounced fallback to another provider.
 ## Public demo and development
 
 [GitHub Pages](https://yukurash.github.io/jev-playwright-repair-lab/) is a keyless
-**recorded replay**, not a hosted inference endpoint. Until measurements are
-collected, it labels the data as uncollected and uses a clearly marked conceptual
-walkthrough. Do not mistake animation time for actual inference latency.
+**recorded replay**, not a hosted inference endpoint. It currently shows all
+108 final GPT-5.5-strategy trials and explicitly labels Jev as unmeasured.
+An empty dataset instead shows a clearly marked conceptual walkthrough.
+Do not mistake animation time for actual inference latency.
 
 Changes go through a branch and PR. Required CI runs on Windows and Ubuntu, with
 separate browser regressions. A successful main-branch CI triggers artifact-based

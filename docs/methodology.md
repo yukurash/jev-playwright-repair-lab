@@ -2,8 +2,11 @@
 
 ## Status
 
-No paid inference or Jev/GPT-5.5 comparison has been performed yet. Empty public
-data is intentional. The explanatory demo is not a measured result.
+The [first GPT-5.5-only evaluation](gpt-5.5-results.md) was completed on
+2026-09-25 JST. Its complete final run is public: 108 scheduled/recorded trials,
+90 API decisions, and 18 deterministic guards. Jev has not been measured.
+There is no Jev/GPT-5.5 comparison yet. The explanatory empty-state demo remains
+distinct from these recorded results.
 
 ## What is being compared
 
