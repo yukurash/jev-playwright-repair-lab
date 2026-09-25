@@ -143,8 +143,12 @@ successful repair or an unannounced fallback to another provider.
 [GitHub Pages](https://yukurash.github.io/jev-playwright-repair-lab/) is a keyless
 **recorded replay**, not a hosted inference endpoint. It currently shows all
 324 final trials across rules, GPT-5.5 and Jev, with separate-run provenance.
-An empty dataset instead shows a clearly marked conceptual walkthrough.
-Do not mistake animation time for actual inference latency.
+The **Jev Switchboard** starts with a recorded decision you can switch between
+GPT, Jev, and rules. Repair, timing, and cost aggregates are separate views;
+a second example reveals a test passing despite a business regression.
+All records and provenance remain available in explicit disclosure panels.
+An empty/partial dataset does not fabricate the complete comparison story.
+The switch makes no API calls and does not simulate measured waiting time.
 
 Changes go through a branch and PR. Required CI runs on Windows and Ubuntu, with
 separate browser regressions. A successful main-branch CI triggers artifact-based

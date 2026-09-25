@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { describeTrials, formatCost, parseDataset } from "./data";
+import { describeTrials, formatCost, formatDuration, parseDataset } from "./data";
+import { summarize } from "../../../packages/experiment/src/summary";
+import recorded from "../../../data/public/results.json";
 import { comparisonFixture, datasetFixture, trialFixture } from "./test-fixtures";
 
 describe("public dataset validation", () => {
@@ -120,5 +122,29 @@ describe("descriptive trial counts", () => {
     expect(formatCost(null)).toBe("未記録");
     expect(formatCost(0)).toBe("$0.00");
     expect(formatCost(0.00000001)).not.toBe("$0.00");
+    expect(formatCost(0.00191709)).toBe("$0.00191709");
+  });
+
+  it("does not round tiny measured decision times into zero", () => {
+    expect(formatDuration(null)).toBe("未記録");
+    expect(formatDuration(0)).toBe("0 ms");
+    expect(formatDuration(0.1644)).toBe("0.16 ms");
+    expect(formatDuration(0.0001)).toBe("1.00e-4 ms");
+    expect(formatDuration(275.1856)).toBe("275.19 ms");
+    expect(formatDuration(3808.733)).toBe("3.81 秒");
+  });
+
+  it("uses the CLI's aggregation for all 324 unchanged final records", () => {
+    const dataset = parseDataset(recorded);
+    const rows = summarize(dataset.trials);
+    expect(rows.map((row) => row.correctRepairs)).toEqual([30, 48, 48]);
+    expect(rows.map((row) => row.repairableTrials)).toEqual([48, 48, 48]);
+    expect(rows.map((row) => row.decisions)).toEqual([90, 90, 90]);
+    expect(rows.map((row) => row.rightTargetRegressionGreen)).toEqual([6, 9, 9]);
+    expect(rows[1]!.decisionLatencyP50Ms).toBeCloseTo(3808.733, 3);
+    expect(rows[2]!.decisionLatencyP50Ms).toBeCloseTo(275.1856, 3);
+    expect(rows[2]!.totalLatencyP50Ms).toBeCloseTo(1925.4546, 3);
+    expect(rows[2]!.observedCostUsd).toBeCloseTo(0.00191709, 10);
+    expect(summarize([])[0]!.totalLatencyP50Ms).toBeNull();
   });
 });

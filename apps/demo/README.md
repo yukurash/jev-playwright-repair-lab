@@ -1,10 +1,14 @@
-# Recorded comparison viewer
+# Jev Switchboard
 
 React / Vite の静的ビューア。公開パスは `/jev-playwright-repair-lab/`。
 ビルド時に `data/public/results.json` を読み、core の `PublicDataset` / `TrialResult` と同じ契約をランタイムでも検証する。
 不正形式・未承認の非空データはエラーとして表示し、空データへフォールバックしない。
 
-- 未収集時は説明用の画面・コードだけを表示する。説明を実測値に見せない。
+- 主役は「有限な判断をGPTからJevへ差し替える」体験。全件テーブルを最初の画面に並べない。
+- `backup-create-a` の方式ごとの最初の反復を使用。画面は候補を説明用に再構成し、回答・時間・料金は記録から読む。`?model=azure|jev|rule` で判断役を共有できる。
+- 集計は修復／判断時間／費用を切り替えて表示。CLIと共有の純粋な `summary.ts` で算出し、個別試行値と区別する。別時刻・別経路という注意書きは集計の直下に常時表示する。
+- `email-not-sent-a` は二つ目の任意の体験。元アサーションPASS／独立oracle FAILを示し、検証コードの仕事をモデルの能力に数えない。
+- 指定した実測・比較出典が揃わなければストーリーと集計を表示しない。未収集・一部実測を明示し、架空の成功や性能値で補わない。
 - データがあればケース・方式・各試行を選択できる。件数の分母は選択条件内の試行で、検証欠損やコスト欠損を 0 としない。
 - 一部モデルだけの実測では、そのモデル名と未実測モデルを表示する。provider名だけで実測済みとせず、API応答の選択とusageがある記録で判定する。決定論的ガードはモデルの実績に含めない。
 - 元テストのアサーション、oracle、操作先の検証結果を独立して表示する。方式の優劣を推測しない。
@@ -17,8 +21,8 @@ React / Vite の静的ビューア。公開パスは `/jev-playwright-repair-lab
 ```powershell
 npm run build:demo
 npm run preview:demo
-npx vitest run apps/demo/src/data.test.ts
-npx vitest run --config vitest.browser.config.ts apps/demo/src/demo.browser.test.ts
+npx vitest run apps\demo\src\data.test.ts
+npx vitest run --config vitest.browser.config.ts apps\demo\src\demo.browser.test.ts
 ```
 
 ブラウザーテストにはインストール済みの Playwright Chromium が必要。
@@ -28,16 +32,17 @@ npx vitest run --config vitest.browser.config.ts apps/demo/src/demo.browser.test
 
 ## Design
 
-初期表示はダークな開発ツール型。紹介文よりも、ケース一覧・差分エディタ・独立検証を優先する。
-説明モードの3ケースは手書きの概念例で、fixture実行結果やprovider応答ではない。
-ケース、ステップ、差分／画面表示はURLクエリに保存し、再読み込み・共有で復元する。
-実測データがある場合のフィルター・個別試行・欠損値表示は従来どおり維持する。
+旧ワークベンチの情報密度と目的の曖昧さを見直し、ゼロベースで再設計。
+データ台帳ではなく「選ぶ仕事を切り出す」という一つの持ち帰りを主役にした。
+批判役を置き、実画面・最初の画面での理解・情報の段階的表示を検証する。
+全324件のフィルター・HTML・差分・usage・SHA等は削除せず、任意に開く記録庫へ移した。
+旧説明ケースのステップ／画面クエリは新デザインでは使用しない。
 
-- Palette: page `#0e1219`、surface `#151b25`、text `#e7edf5`、
-  muted `#a0adc0`、selection `#8ec3ff`。赤／緑は差分と検証状態に限定する。
+- Palette: page `#181a17`、text `#f3f1e7`、accent `#d5f56b`。
+  紙色の実験台・触れるスイッチ・選択スタンプで遊び心を作る。既存のダーク初期値とライト切り替えを維持。
 - Typography: 日本語UIはOSの可読性の高いフォント、コードのみCascadia Code／Consolas系。
   外部フォントやフォント用ネットワーク通信は追加しない。
-- Layout: PCは左ケース・中央コード・右検証の3列。狭い画面では縦配置へ変える。
+- Layout: PCは左の問いと右の実験台。指標は1種類ずつ、根拠は折りたたみ。狭い画面では縦配置へ変える。
   コードブロック以外に横スクロールを発生させない。
 - Interaction: 実際に操作できる要素だけをボタンにする。自動再生・点滅・装飾アニメーションなし。
   キーボード操作、focus表示、reduced motion、ライトテーマを維持する。
@@ -51,9 +56,8 @@ Apache-2.0 [LICENSE.txt](../../.github/skills/frontend-design/LICENSE.txt) を�
 Skillのblob SHAは `a5333457c414d20d625f307df945842c0952ecc3`。
 グローバル設定・外部サービス・Skill用実行スクリプトは追加していない。
 
-固有の題材を主役にすること、意図のある配色・文字階層、カードの過剰使用を避けること、
-空状態を次の操作につなげることを設計へ反映した。ユーザーが選択したダーク開発ツールという
-方向を優先し、特定製品の画面・素材をコピーしてはいない。
+上記Skillは過去のデザインで導入したもの。今回の設計は既存のレイアウトを引き継がず、
+目的と情報階層から作り直した。特定製品の画面・素材をコピーしてはいない。
 
 [Vercel Web Interface Guidelines](https://github.com/vercel-labs/web-interface-guidelines)
 は操作性・アクセシビリティの参照として使用（Skillのインストールはしていない）。
