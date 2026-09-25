@@ -7,11 +7,11 @@ import { getBearerTokenProvider } from "@azure/identity";
 import { DECISION_INSTRUCTION, decisionContext, type DecisionRequest } from "../../core/src/index.js";
 import { BudgetLedger, committedNanos, usdToNanos } from "./budget.js";
 import {
-  AZURE_TOKEN_SCOPE, DEFAULT_LEDGER_PATH, inspectConfiguration, loadConfiguration,
-  validateConfiguration, verifyPrivatePath, type ProviderConfiguration,
+  AZURE_TOKEN_SCOPE, DEFAULT_LEDGER_PATH, GATEWAY_JEV_MODEL, inspectConfiguration, loadConfiguration,
+  jevCredentialName, validateConfiguration, verifyFreeOnly, verifyPrivatePath, type ProviderConfiguration,
 } from "./configuration.js";
 import { createProvider } from "./index.js";
-import { azurePayload, buildLiveProvider, jevPayload } from "./live.js";
+import { azurePayload, buildLiveProvider, gatewayPayload, jevPayload } from "./live.js";
 
 vi.mock("@azure/identity", () => ({
   AzureCliCredential: class {
@@ -69,6 +69,34 @@ function jevResponse(selected = "c1"): Record<string, unknown> {
   };
 }
 
+function gatewayConfig(): ProviderConfiguration {
+  const base = config();
+  return {
+    ...base,
+    jev: { route: "vercel-ai-gateway", model: GATEWAY_JEV_MODEL, provider: "digitalocean",
+      requireFree: true, freeUntil: "2100-01-01T00:00:00Z", pricing: {
+      ...base.jev!.pricing, inputUsdPerMillion: 0,
+      source: "Mock verified free pricing; not current applicable rates",
+    } },
+  };
+}
+
+function gatewayResponse(): Record<string, unknown> {
+  return {
+    model: GATEWAY_JEV_MODEL,
+    answers: { decision: { type: "choice", choice: "c1", probabilities: { c1: 0.6, NO_REPAIR: 0.3, ABSTAIN: 0.1 } } },
+    usage: { inputTokens: 100, outputTokens: 20 },
+    providerMetadata: { gateway: gatewayMetadata() },
+  };
+}
+
+function gatewayMetadata() {
+  return {
+    generationId: "test-generation-id", cost: "0", gatewayCost: "0", surchargeCost: "0", marketCost: "0.0000042",
+    routing: { originalModelId: GATEWAY_JEV_MODEL, canonicalSlug: GATEWAY_JEV_MODEL, finalProvider: "digitalocean", totalProviderAttemptCount: 1 },
+  };
+}
+
 let directory: string;
 let ledger: BudgetLedger;
 
@@ -78,6 +106,7 @@ beforeEach(async () => {
   ledger = new BudgetLedger(resolve(directory, "budget.json"));
   await ledger.initialize();
   vi.stubEnv("TYPESAFE_API_KEY", "test-only-not-a-real-key");
+  vi.stubEnv("AI_GATEWAY_API_KEY", "test-only-not-a-real-gateway-key");
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Unexpected network call"); }));
 });
 
@@ -162,6 +191,113 @@ describe("config and deterministic baseline", () => {
     expect(() => validateConfiguration({ ...config(), jev: { ...config().jev, model: "jev-latest" } })).toThrow();
     expect(() => validateConfiguration({ ...config(), azure: { ...config().azure, pricing: { inputUsdPerMillion: Infinity } } })).toThrow();
     expect(() => createProvider("azure")).toThrow();
+  });
+
+  it("requires an explicit Gateway route, model and free-only policy", () => {
+    const gateway = gatewayConfig();
+    expect(validateConfiguration(gateway)).toEqual(gateway);
+    expect(jevCredentialName(gateway)).toBe("AI_GATEWAY_API_KEY");
+    expect(jevCredentialName(config())).toBe("TYPESAFE_API_KEY");
+    expect(() => validateConfiguration({ ...gateway, jev: { ...gateway.jev, route: "unverified" } })).toThrow();
+    expect(() => validateConfiguration({ ...gateway, jev: { ...gateway.jev, model: "jev-1.13.0" } })).toThrow();
+    expect(() => validateConfiguration({ ...gateway, jev: { ...gateway.jev, requireFree: undefined } })).toThrow();
+    expect(() => validateConfiguration({ ...gateway, jev: { ...gateway.jev, provider: "unverified" } })).toThrow();
+    expect(() => validateConfiguration({ ...gateway, jev: { ...gateway.jev, freeUntil: "2026-09-25" } })).toThrow();
+    expect(() => verifyFreeOnly(gateway)).not.toThrow();
+    gateway.jev!.pricing.inputUsdPerMillion = 0.042;
+    expect(() => verifyFreeOnly(gateway)).toThrowError(expect.objectContaining({ code: "FREE_ONLY" }));
+  });
+
+  describe("Vercel Gateway HTTP transport (mock fetch only)", () => {
+    it("sends the identical finite-choice task once, pins the upstream and settles reported free cost", async () => {
+      const cfg = gatewayConfig();
+      const payload = gatewayPayload(request, cfg);
+      expect(payload.state).toBe(jevPayload(request).state);
+      expect(payload.questions).toEqual(jevPayload(request).questions);
+      const transport = mockResponse(gatewayResponse());
+      transport.mockImplementation(async (url, init) => {
+        expect((await ledger.inspect()).reservations[0]?.status).toBe("reserved");
+        expect(url).toBe("https://ai-gateway.vercel.sh/v1/evaluate");
+        expect(init?.method).toBe("POST");
+        expect(init?.redirect).toBe("error");
+        expect(init?.headers).toEqual({
+          "content-type": "application/json", authorization: "Bearer test-only-not-a-real-gateway-key",
+        });
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          model: GATEWAY_JEV_MODEL, providerOptions: { gateway: { only: ["digitalocean"] } },
+        });
+        return new Response(JSON.stringify(gatewayResponse()), { headers: { "content-type": "application/json" } });
+      });
+      const result = await buildLiveProvider("jev", cfg, ledger).decide(request);
+      expect(result).toMatchObject({
+        model: GATEWAY_JEV_MODEL, route: "vercel-ai-gateway", choice: "c1",
+        usage: { inputTokens: 100, outputTokens: 20 }, costUsd: 0, requestId: "test-generation-id",
+      });
+      expect(result.modelVersion).toBeUndefined();
+      expect(result.confidence).toBeUndefined();
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect((await ledger.inspect()).reservations[0]?.status).toBe("settled");
+    });
+
+    it.each(["missing", "invalid", "expired", "deadline"])("blocks %s free-price validity before any reservation", async (kind) => {
+      const cfg = gatewayConfig();
+      if (cfg.jev?.route !== "vercel-ai-gateway") throw new Error("Invalid test configuration");
+      cfg.jev.freeUntil = kind === "missing" ? undefined : kind === "invalid" ? "unverified" : kind === "expired"
+        ? "2000-01-01T00:00:00Z" : new Date(Date.now() + 1000).toISOString();
+      await expect(buildLiveProvider("jev", cfg, ledger).decide(request)).rejects.toMatchObject({ code: "FREE_NOT_CONFIRMED" });
+      expect(fetch).not.toHaveBeenCalled();
+      expect((await ledger.inspect()).reservations).toHaveLength(0);
+    });
+
+    it("blocks nonzero rates and never substitutes the TypeSafe key", async () => {
+      const cfg = gatewayConfig();
+      cfg.jev!.pricing.inputUsdPerMillion = 0.042;
+      await expect(buildLiveProvider("jev", cfg, ledger).decide(request)).rejects.toMatchObject({ code: "FREE_ONLY" });
+      vi.stubEnv("AI_GATEWAY_API_KEY", "");
+      await expect(buildLiveProvider("jev", gatewayConfig(), ledger).decide(request)).rejects.toMatchObject({ code: "MISSING_CREDENTIAL" });
+      expect(fetch).not.toHaveBeenCalled();
+      expect((await ledger.inspect()).reservations).toHaveLength(0);
+    });
+
+    it.each([
+      ["missing usage", { ...gatewayResponse(), usage: undefined }],
+      ["snake-case usage", { ...gatewayResponse(), usage: { input_tokens: 100, output_tokens: 20 } }],
+      ["over-limit usage", { ...gatewayResponse(), usage: { inputTokens: 32_001, outputTokens: 20 } }],
+      ["model substitution", { ...gatewayResponse(), model: "jev-1.13.0" }],
+      ["missing metadata", { ...gatewayResponse(), providerMetadata: undefined }],
+      ["missing billed cost", { ...gatewayResponse(), providerMetadata: { gateway: { ...gatewayMetadata(), gatewayCost: undefined } } }],
+      ["unexpected charge", { ...gatewayResponse(), providerMetadata: { gateway: { ...gatewayMetadata(), gatewayCost: "0.01", cost: "0.01" } } }],
+      ["unexpected surcharge", { ...gatewayResponse(), providerMetadata: { gateway: { ...gatewayMetadata(), gatewayCost: "0.01", surchargeCost: "0.01" } } }],
+      ["invalid cost", { ...gatewayResponse(), providerMetadata: { gateway: { ...gatewayMetadata(), gatewayCost: "-1" } } }],
+      ["wrong upstream", { ...gatewayResponse(), providerMetadata: { gateway: { ...gatewayMetadata(), routing: { ...gatewayMetadata().routing, finalProvider: "typesafe-ai" } } } }],
+      ["upstream retry", { ...gatewayResponse(), providerMetadata: { gateway: { ...gatewayMetadata(), routing: { ...gatewayMetadata().routing, totalProviderAttemptCount: 2 } } } }],
+      ["invalid choice", { ...gatewayResponse(), answers: { decision: { type: "choice", choice: "c999", probabilities: { c1: 1, NO_REPAIR: 0, ABSTAIN: 0 } } } }],
+    ])("fails closed on %s and blocks subsequent calls", async (_label, body) => {
+      const transport = mockResponse(body);
+      const provider = buildLiveProvider("jev", gatewayConfig(), ledger);
+      await expect(provider.decide(request)).rejects.toThrow();
+      expect((await ledger.inspect()).reservations[0]?.status).toBe("unknown");
+      await expect(provider.decide(request)).rejects.toMatchObject({ code: "UNRESOLVED_BILLING" });
+      expect(transport).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([401, 403, 429, 503])("never retries Gateway HTTP %s or falls back", async (status) => {
+      const transport = mockResponse({ error: { message: "private-response-details" } }, status);
+      await expect(buildLiveProvider("jev", gatewayConfig(), ledger).decide(request)).rejects.not.toThrow("private-response-details");
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect((await ledger.inspect()).reservations[0]?.status).toBe("unknown");
+    });
+
+    it("settles the reported debit, not the market-price estimate, when paid use is explicitly allowed", async () => {
+      const cfg = gatewayConfig();
+      if (cfg.jev?.route !== "vercel-ai-gateway") throw new Error("Invalid test configuration");
+      cfg.jev.requireFree = false;
+      cfg.jev.pricing.inputUsdPerMillion = 0.042;
+      mockResponse({ ...gatewayResponse(), providerMetadata: { gateway: { ...gatewayMetadata(), gatewayCost: "0.0000021", cost: "0.0000021" } } });
+      const result = await buildLiveProvider("jev", cfg, ledger).decide(request);
+      expect(result.costUsd).toBe(0.0000021);
+      expect((await ledger.inspect()).reservations[0]?.status).toBe("settled");
+    });
   });
 
   it("selects deterministic exact matches, abstains on ties, and rejects unrelated candidates", async () => {

@@ -11,7 +11,8 @@ import {
 } from "../../core/src/index.js";
 import { BudgetLedger, type Reservation, validateUsage } from "./budget.js";
 import {
-  AZURE_TOKEN_SCOPE, JEV_MODEL, verifyPrivatePath, type Pricing, type ProviderConfiguration,
+  AZURE_TOKEN_SCOPE, GATEWAY_JEV_MODEL, JEV_MODEL, jevCredentialName, verifyFreeOnly,
+  verifyPrivatePath, type Pricing, type ProviderConfiguration,
 } from "./configuration.js";
 import { canonicalRequest } from "./decision.js";
 import { integer, object, ProviderError, text } from "./errors.js";
@@ -55,6 +56,15 @@ export function jevPayload(request: DecisionRequest) {
     model: JEV_MODEL,
     state: decisionContext(request),
     questions: { decision: choice(DECISION_INSTRUCTION, criteria) },
+  };
+}
+
+export function gatewayPayload(request: DecisionRequest, config: ProviderConfiguration) {
+  const jev = config.jev;
+  if (jev?.route !== "vercel-ai-gateway") throw new ProviderError("MISSING_PROVIDER", "Gateway configuration missing");
+  return {
+    ...jevPayload(request), model: GATEWAY_JEV_MODEL,
+    providerOptions: { gateway: { only: [jev.provider] } },
   };
 }
 
@@ -152,10 +162,8 @@ function probability(value: unknown): number {
   return value;
 }
 
-function parseJev(value: unknown, request: DecisionRequest): Omit<ProviderResult, "latencyMs" | "costUsd"> {
-  const response = object(value, "Jev response");
-  if (response.model !== JEV_MODEL) throw new ProviderError("MODEL_CHANGED", "Jev returned a different model version");
-  const answers = object(response.answers, "Jev answers");
+function parseJevAnswer(value: unknown, request: DecisionRequest, requireConfidence: boolean) {
+  const answers = object(value, "Jev answers");
   if (Object.keys(answers).length !== 1 || !Object.hasOwn(answers, "decision")) {
     throw new ProviderError("INVALID_RESPONSE", "Unexpected Jev answer keys");
   }
@@ -170,13 +178,60 @@ function parseJev(value: unknown, request: DecisionRequest): Omit<ProviderResult
   if (Math.abs(Object.values(probabilities).reduce((sum, value) => sum + value, 0) - 1) > 0.001) {
     throw new ProviderError("INVALID_RESPONSE", "Jev probabilities do not sum to one");
   }
+  return {
+    choice: validateChoice(answer.choice, request), probabilities,
+    ...(requireConfidence || answer.confidence !== undefined ? { confidence: probability(answer.confidence) } : {}),
+  };
+}
+
+function parseJev(value: unknown, request: DecisionRequest): Omit<ProviderResult, "latencyMs" | "costUsd"> {
+  const response = object(value, "Jev response");
+  if (response.model !== JEV_MODEL) throw new ProviderError("MODEL_CHANGED", "Jev returned a different model version");
   const rawUsage = object(response.usage, "Jev usage");
   const usage = validateUsage({
     inputTokens: integer(rawUsage.input_tokens, "input_tokens", 1), outputTokens: rawUsage.output_tokens,
   });
   return {
-    choice: validateChoice(answer.choice, request), model: JEV_MODEL, modelVersion: JEV_MODEL,
-    confidence: probability(answer.confidence), probabilities, usage,
+    ...parseJevAnswer(response.answers, request, true), model: JEV_MODEL, modelVersion: JEV_MODEL, usage,
+  };
+}
+
+function gatewayCost(value: unknown): number {
+  if (typeof value !== "string" || !/^\d+(?:\.\d+)?$/.test(value) || !Number.isFinite(Number(value))) {
+    throw new ProviderError("INVALID_COST", "Gateway must report a finite nonnegative decimal-string cost");
+  }
+  return Number(value);
+}
+
+function parseGateway(value: unknown, request: DecisionRequest, config: ProviderConfiguration): Omit<ProviderResult, "latencyMs"> {
+  const jev = config.jev;
+  if (jev?.route !== "vercel-ai-gateway") throw new ProviderError("MISSING_PROVIDER", "Gateway configuration missing");
+  const response = object(value, "Gateway response");
+  if (response.model !== GATEWAY_JEV_MODEL) throw new ProviderError("MODEL_CHANGED", "Gateway returned a different model");
+  const metadata = object(object(response.providerMetadata, "Gateway metadata").gateway, "Gateway metadata");
+  const routing = object(metadata.routing, "Gateway routing");
+  if (routing.originalModelId !== GATEWAY_JEV_MODEL || routing.canonicalSlug !== GATEWAY_JEV_MODEL ||
+      routing.finalProvider !== jev.provider) {
+    throw new ProviderError("ROUTE_CHANGED", "Gateway returned an unexpected model or upstream provider");
+  }
+  if (routing.totalProviderAttemptCount !== undefined && integer(routing.totalProviderAttemptCount, "upstream attempts", 1) !== 1) {
+    throw new ProviderError("RETRY_BLOCKED", "Gateway reported multiple upstream attempts; inspect raw routing metadata");
+  }
+  const rawUsage = object(response.usage, "Gateway usage");
+  const usage = validateUsage({
+    inputTokens: integer(rawUsage.inputTokens, "inputTokens", 1),
+    outputTokens: integer(rawUsage.outputTokens, "outputTokens"),
+  });
+  const costUsd = gatewayCost(metadata.gatewayCost);
+  const inferenceCost = gatewayCost(metadata.cost);
+  const surcharge = gatewayCost(metadata.surchargeCost);
+  if (costUsd < inferenceCost || costUsd < surcharge) throw new ProviderError("INVALID_COST", "Gateway cost metadata is inconsistent");
+  if (jev.requireFree && (costUsd !== 0 || inferenceCost !== 0 || surcharge !== 0)) {
+    throw new ProviderError("UNEXPECTED_CHARGE", "Gateway reported a charge despite the free-only policy; reconciliation required");
+  }
+  return {
+    ...parseJevAnswer(response.answers, request, false), model: GATEWAY_JEV_MODEL,
+    route: "vercel-ai-gateway", usage, costUsd, requestId: text(metadata.generationId, "Gateway generation ID"),
   };
 }
 
@@ -218,10 +273,13 @@ export function buildLiveProvider(
       if (Object.values(config.approvals).some((approved) => approved !== true)) {
         throw new ProviderError("APPROVAL_REQUIRED", "Pricing, access, and publication approval are required before a live call");
       }
-      if (id === "jev" && !process.env.TYPESAFE_API_KEY?.trim()) {
-        throw new ProviderError("MISSING_CREDENTIAL", "TYPESAFE_API_KEY is missing");
+      const gateway = id === "jev" && config.jev?.route === "vercel-ai-gateway";
+      const credentialName = jevCredentialName(config);
+      if (id === "jev") verifyFreeOnly(config);
+      if (id === "jev" && !process.env[credentialName]?.trim()) {
+        throw new ProviderError("MISSING_CREDENTIAL", `${credentialName} is missing`);
       }
-      const body = id === "azure" ? azurePayload(request, config) : jevPayload(request);
+      const body = id === "azure" ? azurePayload(request, config) : gateway ? gatewayPayload(request, config) : jevPayload(request);
       const inputTokenLimit = checkBody(body, config);
       if (id === "jev" && inputTokenLimit > 32_000) {
         throw new ProviderError("INPUT_LIMIT", "Jev's single-question context allowance must be at most 32,000 tokens");
@@ -266,6 +324,23 @@ export function buildLiveProvider(
               }).withResponse();
               return { raw: result.data as unknown, requestId: result.request_id ?? undefined };
             }
+            if (gateway) {
+              verifyFreeOnly(config);
+              const url = "https://ai-gateway.vercel.sh/v1/evaluate";
+              const response = await boundedFetch(url, config, controller.signal)(url, {
+                method: "POST",
+                headers: { "content-type": "application/json", authorization: `Bearer ${process.env.AI_GATEWAY_API_KEY!}` },
+                body: JSON.stringify(body),
+              });
+              const responseText = await response.text();
+              if (!response.ok) {
+                await recordRaw(config.rawResponseDirectory, reservation!, { status: response.status, body: responseText });
+                const code = response.status === 401 ? "AUTHENTICATION" : response.status === 403 ? "PERMISSION"
+                  : response.status === 429 ? "RATE_LIMIT" : "PROVIDER_FAILURE";
+                throw new ProviderError(code, "Gateway HTTP request failed");
+              }
+              return { raw: JSON.parse(responseText) as unknown, requestId: undefined };
+            }
             const client = new TypeSafeClient({
               apiKey: process.env.TYPESAFE_API_KEY!,
               baseURL: "https://api.typesafe.ai", defaultModel: JEV_MODEL,
@@ -283,10 +358,11 @@ export function buildLiveProvider(
           controller.abort();
         }
         await recordRaw(config.rawResponseDirectory, reservation, raw);
-        const parsed = id === "azure" ? parseAzure(raw, request, config) : parseJev(raw, request);
+        const parsed = id === "azure" ? parseAzure(raw, request, config) : gateway ? parseGateway(raw, request, config) : parseJev(raw, request);
         const usage: Usage = parsed.usage!;
         // Cached tokens are charged at the verified full input rate: never assume a discount.
-        const costUsd = estimatedCost(settings.pricing, usage.inputTokens, usage.outputTokens);
+        const costUsd = "costUsd" in parsed && typeof parsed.costUsd === "number"
+          ? parsed.costUsd : estimatedCost(settings.pricing, usage.inputTokens, usage.outputTokens);
         await ledger.settle(reservation.id, costUsd, usage);
         return { ...parsed, latencyMs: performance.now() - started, costUsd, ...(requestId ? { requestId } : {}) };
       } catch (error) {

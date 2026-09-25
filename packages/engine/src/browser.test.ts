@@ -78,6 +78,19 @@ describe("real Chromium locator repair", () => {
     expect(result.status, result.error ?? result.reason).toBe("repaired");
   }, 20_000);
 
+  it("retains gateway provenance without inventing a pinned Jev version", async () => {
+    const selector = select((candidate) => candidate.locator.kind === "role" && candidate.locator.name === "Buy these items");
+    const result = await runCase("checkout-order-a", {
+      id: "jev",
+      async decide(request) {
+        return { ...await selector.decide(request), model: "typesafe-ai/jev", route: "vercel-ai-gateway" };
+      },
+    });
+    expect(result.status).toBe("repaired");
+    expect(result.route).toBe("vercel-ai-gateway");
+    expect(result.modelVersion).toBeUndefined();
+  }, 20_000);
+
   it("repairs a label/fill operation without changing its value", async () => {
     const result = await runCase("contact-email-a", select((candidate) => candidate.locator.kind === "label" && candidate.locator.label === "Contact address"));
     expect(result.status, result.error ?? result.reason).toBe("repaired");

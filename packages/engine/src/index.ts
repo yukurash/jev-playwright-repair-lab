@@ -177,6 +177,7 @@ async function expectedDecision(page: Page, fixture: FixtureCase, candidates: Ca
 function copyProviderResult(result: TrialResult, decision: ProviderResult): void {
   result.model = decision.model;
   if (decision.modelVersion !== undefined) result.modelVersion = decision.modelVersion;
+  if (decision.route !== undefined) result.route = decision.route;
   if (decision.usage !== undefined) result.usage = decision.usage;
   if (decision.costUsd !== undefined) result.costUsd = decision.costUsd;
   if (decision.confidence !== undefined) result.confidence = decision.confidence;

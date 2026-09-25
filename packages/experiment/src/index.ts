@@ -124,6 +124,9 @@ export function assertTrial(value: unknown): asserts value is TrialResult {
     throw new Error("Invalid trial latency");
   }
   if (value.costUsd !== undefined && !nonnegative(value.costUsd)) throw new Error("Invalid trial cost");
+  if (value.route !== undefined && (value.route !== "vercel-ai-gateway" || value.provider !== "jev")) {
+    throw new Error("Invalid trial route");
+  }
   if (value.usage !== undefined) {
     if (!record(value.usage) || !nonnegative(value.usage.inputTokens) || !nonnegative(value.usage.outputTokens)) throw new Error("Invalid trial usage");
     for (const key of ["reasoningTokens", "cachedInputTokens"]) {
@@ -167,6 +170,7 @@ export function publicDataset(trials: TrialResult[], publicationApproved: boolea
     provider: trial.provider,
     model: trial.model,
     modelVersion: trial.modelVersion,
+    route: trial.route,
     status: trial.status,
     decision: trial.decision,
     expectedDecision: trial.expectedDecision,

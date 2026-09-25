@@ -68,6 +68,13 @@ Get your own Jev access and personally review the applicable terms at
 environment or the private `local-config/providers.env` file, never in chat or Git.
 There is no automatic credit purchase or auto-top-up.
 
+Alternatively, select the explicit **Vercel AI Gateway** route and supply
+`AI_GATEWAY_API_KEY` in that same private environment file. Do not put a Gateway
+key in `TYPESAFE_API_KEY`. The route uses `typesafe-ai/jev`, not a verified pinned
+upstream revision. See [Gateway setup and free-only checks](docs/providers.md#jev-through-vercel-ai-gateway).
+Gateway support is mock-tested; Jev remains unmeasured. API-key validity and a
+promotional banner do not establish that an inference request is free.
+
 Use an existing Azure OpenAI GPT-5.5 deployment with Azure CLI / Entra ID
 authentication. This repository does not provision Azure infrastructure or
 silently switch models. See [provider configuration](docs/providers.md) for

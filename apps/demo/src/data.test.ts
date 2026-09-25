@@ -6,6 +6,7 @@ describe("public dataset validation", () => {
   it("accepts the deliberate uncollected state and valid recorded trials", () => {
     expect(parseDataset(datasetFixture()).trials).toEqual([]);
     expect(parseDataset(datasetFixture([trialFixture()])).trials).toHaveLength(1);
+    expect(parseDataset(datasetFixture([trialFixture({ provider: "jev", route: "vercel-ai-gateway" })])).trials[0]?.route).toBe("vercel-ai-gateway");
   });
 
   it.each([
@@ -27,6 +28,8 @@ describe("public dataset validation", () => {
     ["decision", { decision: "c9" }],
     ["costUsd", { costUsd: -1 }],
     ["confidence", { confidence: 1.1 }],
+    ["route", { route: "unverified-route" }],
+    ["route", { provider: "azure", route: "vercel-ai-gateway" }],
     ["latency.totalMs", { latency: { captureMs: 0, decisionMs: 0, validationMs: 0, totalMs: Number.NaN } }],
     ["usage.inputTokens", { usage: { inputTokens: 1.2, outputTokens: 1 } }],
     ["candidates[0].locator.role", { candidates: [{ id: "c0", context: "", locator: { kind: "role", role: "admin", name: "" } }] }],
