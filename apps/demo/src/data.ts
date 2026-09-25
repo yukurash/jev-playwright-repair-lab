@@ -73,7 +73,7 @@ function validateTrial(value: unknown, path: string): asserts value is TrialResu
   enumValue(trial.status, statuses, `${path}.status`);
   enumValue(trial.category, categories, `${path}.category`);
   enumValue(trial.provider, providers, `${path}.provider`);
-  if (trial.route !== undefined && (trial.route !== "vercel-ai-gateway" || trial.provider !== "jev")) fail(`${path}.route`);
+  if (trial.route !== undefined && (!["vercel-ai-gateway", "openrouter"].includes(String(trial.route)) || trial.provider !== "jev")) fail(`${path}.route`);
   enumValue(trial.split, splits, `${path}.split`);
   enumValue(trial.inference, ["live", "deterministic"], `${path}.inference`);
   boolean(trial.baselinePassed, `${path}.baselinePassed`);

@@ -45,7 +45,7 @@ beforeAll(async () => {
   await buildPreview("empty", datasetFixture());
   await buildPreview("recorded", datasetFixture([
     trialFixture({ afterHtml: hostileHtml }),
-    trialFixture({ provider: "jev", model: "test-jev", route: "vercel-ai-gateway", status: "abstained", decision: "ABSTAIN", repairedTest: undefined, originalTestPassed: null, oraclePassed: null, targetCorrect: null, confidence: 0.7, recordedAt: "2026-01-01T00:01:00.000Z" }),
+    trialFixture({ provider: "jev", model: "test-jev", route: "openrouter", status: "abstained", decision: "ABSTAIN", repairedTest: undefined, originalTestPassed: null, oraclePassed: null, targetCorrect: null, confidence: 0.7, recordedAt: "2026-01-01T00:01:00.000Z" }),
     trialFixture({ caseId: "test-other", title: "別ケース", provider: "azure", inference: "live", usage: { inputTokens: 120, outputTokens: 5 }, costUsd: 0.002, oraclePassed: true, targetCorrect: true }),
     trialFixture({ caseId: "test-guard", title: "モデル未呼び出し", provider: "azure", model: "not-invoked", status: "unsupported", decision: null, expectedDecision: null, repairable: false, repairedTest: undefined, originalTestPassed: false, oraclePassed: null, targetCorrect: null, latency: { captureMs: 10, decisionMs: 0, validationMs: 0, totalMs: 10 } }),
   ]));
@@ -135,7 +135,7 @@ describe("recorded-only comparison demo", () => {
       await browserExpect(page.locator(".outcome").filter({ hasText: "独立 oracle" })).toContainText("FAIL");
       await browserExpect(page.locator(".metric-list > div").filter({ hasText: "記録済みコスト" })).toContainText("未記録");
       await page.getByLabel("保存された試行").selectOption("1");
-      await browserExpect(page.getByText("接続経路: Vercel AI Gateway。", { exact: false })).toBeVisible();
+      await browserExpect(page.getByText("接続経路: OpenRouter。", { exact: false })).toBeVisible();
       await browserExpect(page.getByText("修復後コードは未記録です。元のコードで補完しません。")).toBeVisible();
       await browserExpect(page.getByText("confidence はモデルの自己申告で、正解率ではありません。", { exact: false })).toBeVisible();
       await page.getByLabel("方式", { exact: true }).selectOption("azure");

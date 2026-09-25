@@ -19,6 +19,7 @@ export interface Reservation {
   usage?: Usage;
   failureCode?: string;
   reconciliation?: { evidence: string; at: string };
+  continuation?: { terminalEvidence: string; authorizedAt: string; maxCalls: number };
 }
 
 export interface BudgetSnapshot {
@@ -39,6 +40,11 @@ export function committedNanos(snapshot: BudgetSnapshot): number {
     (sum, entry) => sum + (entry.status === "settled" ? entry.actualNanos! : entry.maximumNanos), 0,
   );
   return integer(total, "ledger total");
+}
+
+export function blocksReservation(entry: Reservation, callCount: number): boolean {
+  return entry.status !== "settled" && !(entry.status === "unknown" &&
+    entry.continuation !== undefined && callCount < entry.continuation.maxCalls);
 }
 
 function parseSnapshot(value: unknown): BudgetSnapshot {
@@ -76,6 +82,18 @@ function parseSnapshot(value: unknown): BudgetSnapshot {
       result.reconciliation = {
         evidence: text(reconciliation.evidence, "reconciliation evidence"),
         at: text(reconciliation.at, "reconciliation date"),
+      };
+    }
+    if (entry.continuation !== undefined) {
+      const continuation = object(entry.continuation, "continuation");
+      if (!["unknown", "settled"].includes(result.status) ||
+          !["AUTHENTICATION", "PERMISSION"].includes(result.failureCode ?? "")) {
+        throw new ProviderError("INVALID_LEDGER", "Only terminal authentication rejections may retain a continuation authorization");
+      }
+      result.continuation = {
+        terminalEvidence: text(continuation.terminalEvidence, "terminal rejection evidence"),
+        authorizedAt: text(continuation.authorizedAt, "continuation authorization date"),
+        maxCalls: integer(continuation.maxCalls, "continuation maxCalls", 1, 1000),
       };
     }
     return result;
@@ -149,7 +167,7 @@ export class BudgetLedger {
     return this.locked(async () => {
       const snapshot = await this.inspect();
       if (snapshot.reservations.length >= maxCalls) throw new ProviderError("CALL_LIMIT", "Shared call limit reached");
-      if (snapshot.reservations.some((entry) => entry.status !== "settled")) {
+      if (snapshot.reservations.some((entry) => blocksReservation(entry, snapshot.reservations.length))) {
         throw new ProviderError("UNRESOLVED_BILLING", "A pending/unknown reservation blocks all providers until explicit reconciliation");
       }
       if (committedNanos(snapshot) + maximumNanos > snapshot.capNanos) {
@@ -185,6 +203,26 @@ export class BudgetLedger {
       if (entry.status === "settled") throw new ProviderError("INVALID_TRANSITION", "A settled reservation cannot become unknown");
       entry.status = "unknown";
       entry.failureCode = text(failureCode, "failureCode");
+      delete entry.continuation;
+    });
+  }
+
+  /** Explicit user authorization after verifying a terminal rejection; this never settles or releases its cost. */
+  async authorizeOneAdditionalCall(id: string, terminalEvidence: string): Promise<void> {
+    text(terminalEvidence, "terminal rejection evidence and user authorization");
+    await this.locked(async () => {
+      const snapshot = await this.inspect();
+      const pending = snapshot.reservations.filter((entry) => entry.status !== "settled");
+      const entry = pending[0];
+      if (pending.length !== 1 || entry?.id !== id || entry.status !== "unknown" ||
+          !["AUTHENTICATION", "PERMISSION"].includes(entry.failureCode ?? "")) {
+        throw new ProviderError("INVALID_TRANSITION", "Only one externally verified terminal authentication rejection may be carried forward");
+      }
+      entry.continuation = {
+        terminalEvidence, authorizedAt: new Date().toISOString(),
+        maxCalls: integer(snapshot.reservations.length + 1, "continuation maxCalls", 1, 1000),
+      };
+      await this.persist(snapshot);
     });
   }
 

@@ -78,16 +78,16 @@ describe("real Chromium locator repair", () => {
     expect(result.status, result.error ?? result.reason).toBe("repaired");
   }, 20_000);
 
-  it("retains gateway provenance without inventing a pinned Jev version", async () => {
+  it.each(["vercel-ai-gateway", "openrouter"] as const)("retains %s provenance without inventing a pinned Jev version", async (route) => {
     const selector = select((candidate) => candidate.locator.kind === "role" && candidate.locator.name === "Buy these items");
     const result = await runCase("checkout-order-a", {
       id: "jev",
       async decide(request) {
-        return { ...await selector.decide(request), model: "typesafe-ai/jev", route: "vercel-ai-gateway" };
+        return { ...await selector.decide(request), model: "test-jev", route };
       },
     });
     expect(result.status).toBe("repaired");
-    expect(result.route).toBe("vercel-ai-gateway");
+    expect(result.route).toBe(route);
     expect(result.modelVersion).toBeUndefined();
   }, 20_000);
 

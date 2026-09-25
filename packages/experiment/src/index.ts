@@ -124,7 +124,7 @@ export function assertTrial(value: unknown): asserts value is TrialResult {
     throw new Error("Invalid trial latency");
   }
   if (value.costUsd !== undefined && !nonnegative(value.costUsd)) throw new Error("Invalid trial cost");
-  if (value.route !== undefined && (value.route !== "vercel-ai-gateway" || value.provider !== "jev")) {
+  if (value.route !== undefined && (!["vercel-ai-gateway", "openrouter"].includes(String(value.route)) || value.provider !== "jev")) {
     throw new Error("Invalid trial route");
   }
   if (value.usage !== undefined) {

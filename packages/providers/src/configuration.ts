@@ -1,7 +1,7 @@
 import { access, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BudgetLedger, committedNanos } from "./budget.js";
+import { blocksReservation, BudgetLedger, committedNanos } from "./budget.js";
 import { integer, nonnegative, object, ProviderError, text } from "./errors.js";
 
 export const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -10,6 +10,8 @@ export const DEFAULT_LEDGER_PATH = resolve(PRIVATE_ROOT, "budget.json");
 export const AZURE_TOKEN_SCOPE = "https://ai.azure.com/.default";
 export const JEV_MODEL = "jev-1.13.0";
 export const GATEWAY_JEV_MODEL = "typesafe-ai/jev";
+export const OPENROUTER_JEV_MODEL = "typesafe/jev-1.13";
+export const OPENROUTER_JEV_REVISION = "typesafe/jev-1.13-20260917";
 
 export interface Pricing {
   inputUsdPerMillion: number;
@@ -43,6 +45,7 @@ export interface ProviderConfiguration {
   };
   jev?: (
     | { route?: "typesafe"; model: typeof JEV_MODEL }
+    | { route: "openrouter"; model: typeof OPENROUTER_JEV_MODEL }
     | {
       route: "vercel-ai-gateway"; model: typeof GATEWAY_JEV_MODEL;
       provider: "typesafe-ai" | "digitalocean"; requireFree: boolean; freeUntil?: string;
@@ -153,11 +156,12 @@ export function validateConfiguration(value: unknown): ProviderConfiguration {
   if (data.jev !== undefined) {
     const jev = object(data.jev, "jev");
     const gateway = jev.route === "vercel-ai-gateway";
+    const openrouter = jev.route === "openrouter";
     keys(jev, gateway ? ["route", "model", "provider", "requireFree", "freeUntil", "pricing"] : ["route", "model", "pricing"], "jev");
-    if (jev.route !== undefined && jev.route !== "typesafe" && !gateway) {
+    if (jev.route !== undefined && jev.route !== "typesafe" && !gateway && !openrouter) {
       throw new ProviderError("INVALID_CONFIGURATION", "Unknown Jev route");
     }
-    if (jev.model !== (gateway ? GATEWAY_JEV_MODEL : JEV_MODEL)) {
+    if (jev.model !== (gateway ? GATEWAY_JEV_MODEL : openrouter ? OPENROUTER_JEV_MODEL : JEV_MODEL)) {
       throw new ProviderError("MODEL_CHANGED", "Jev model must match its explicitly configured route");
     }
     const rates = pricing(jev.pricing);
@@ -178,6 +182,8 @@ export function validateConfiguration(value: unknown): ProviderConfiguration {
         requireFree: jev.requireFree, pricing: rates,
         ...(typeof jev.freeUntil === "string" ? { freeUntil: jev.freeUntil } : {}),
       };
+    } else if (openrouter) {
+      result.jev = { route: "openrouter", model: OPENROUTER_JEV_MODEL, pricing: rates };
     } else {
       result.jev = { model: JEV_MODEL, pricing: rates, ...(jev.route === "typesafe" ? { route: "typesafe" as const } : {}) };
     }
@@ -202,11 +208,12 @@ export interface ConfigurationInspection {
   networkAttempted: false;
   issues: string[];
   providers: { rule: true; azure: boolean; jev: boolean };
-  budget?: { capUsd: number; committedUsd: number; calls: number; unresolved: number };
+  budget?: { capUsd: number; committedUsd: number; calls: number; unresolved: number; retainedMaximumUsd: number; authorizedContinuations: number };
 }
 
-export function jevCredentialName(config: ProviderConfiguration): "AI_GATEWAY_API_KEY" | "TYPESAFE_API_KEY" {
-  return config.jev?.route === "vercel-ai-gateway" ? "AI_GATEWAY_API_KEY" : "TYPESAFE_API_KEY";
+export function jevCredentialName(config: ProviderConfiguration): "AI_GATEWAY_API_KEY" | "OPENROUTER_API_KEY" | "TYPESAFE_API_KEY" {
+  return config.jev?.route === "vercel-ai-gateway" ? "AI_GATEWAY_API_KEY"
+    : config.jev?.route === "openrouter" ? "OPENROUTER_API_KEY" : "TYPESAFE_API_KEY";
 }
 
 export function verifyFreeOnly(config: ProviderConfiguration): void {
@@ -253,8 +260,12 @@ export async function inspectConfiguration(path?: string): Promise<Configuration
       committedUsd: committedNanos(snapshot) / 1_000_000_000,
       calls: snapshot.reservations.length,
       unresolved: snapshot.reservations.filter((entry) => entry.status !== "settled").length,
+      retainedMaximumUsd: snapshot.reservations.filter((entry) => entry.status !== "settled")
+        .reduce((sum, entry) => sum + entry.maximumNanos, 0) / 1_000_000_000,
+      authorizedContinuations: snapshot.reservations.filter((entry) =>
+        entry.status !== "settled" && !blocksReservation(entry, snapshot.reservations.length)).length,
     };
-    if (report.budget.unresolved) report.issues.push("UNRESOLVED_BILLING");
+    if (snapshot.reservations.some((entry) => blocksReservation(entry, snapshot.reservations.length))) report.issues.push("UNRESOLVED_BILLING");
     if (report.budget.committedUsd >= report.budget.capUsd) report.issues.push("BUDGET_EXHAUSTED");
     if (report.budget.calls >= config.limits.maxCalls) report.issues.push("CALL_LIMIT");
     if (await access(`${config.ledgerPath}.lock`).then(() => true, () => false)) report.issues.push("LEDGER_LOCKED");

@@ -9,6 +9,7 @@ it("rejects manuscript and local configuration paths", () => {
 it("rejects secrets without using any real credentials in the test", () => {
   expect(inspectPublicText("data.json", "sk-" + "x".repeat(30))).not.toEqual([]);
   expect(inspectPublicText("data.json", "AI_GATEWAY_API_KEY=" + "x".repeat(30))).not.toEqual([]);
+  expect(inspectPublicText("data.json", "OPENROUTER_API_KEY=" + "x".repeat(30))).not.toEqual([]);
 });
 it("blocks script and network-capable replay snapshots", () => {
   expect(inspectSnapshot("<script>alert(1)</script>")).not.toEqual([]);

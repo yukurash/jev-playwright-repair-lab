@@ -80,9 +80,16 @@ the `typesafe-ai/jev` alias does not independently prove a pinned upstream
 revision. Report the actual Gateway debit separately from its market price,
 and disclose promotional pricing rather than presenting free promotional calls
 as a permanent cost advantage. The adapter is mock-tested; no live Jev results
-are available yet. The GPT-only run remains unchanged. A later comparison must
+are included in the public dataset. The GPT-only run remains unchanged. A later comparison must
 disclose separately run schedules/source SHAs and verify unchanged fixtures and
 instructions; do not present it as an interleaved, single-source experiment.
+
+For OpenRouter, record `route: "openrouter"`, returned model ID, and numeric
+`usage.cost`. Record a dated version only when the response actually contains it.
+Latency includes OpenRouter; credit purchase fees are not per-request inference
+costs. An API smoke test is not the final Jev evaluation and does not change the
+published GPT-only dataset. Unknown charges held at their maximum remain
+unknown, even if a user authorizes one later request with that maximum retained.
 
 ## Runtime
 
