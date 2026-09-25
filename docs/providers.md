@@ -35,7 +35,8 @@ const result = await provider.decide(request);
   `reserve(provider, maximumUsd, inputTokenLimit, outputTokenLimit, maxCalls?)`,
   `settle(id, actualUsd, usage)`, `markUnknown(id, code)`, and
   `reconcile(id, actualUsd, evidence)`, and the explicitly authorized
-  `authorizeOneAdditionalCall(id, terminalEvidence)` described below.
+  `authorizeOneAdditionalCall(id, terminalEvidence)` or bounded-batch
+  `authorizeAdditionalCalls(id, count, terminalEvidence)` described below.
 - `ProviderError` has `code` and optional `reservationId`. Error messages do not
   forward provider response bodies, endpoint names, keys, or SDK exception text.
 - `DEFAULT_LEDGER_PATH`, `AZURE_TOKEN_SCOPE`, `JEV_MODEL`, `MAX_BUDGET_USD`,
@@ -172,9 +173,12 @@ free-tier eligibility are not proof of zero-priced inference.
 
 As of 2026-09-25, the public page advertised free promotional pricing through
 September 25, while the provider catalog reported nonzero input pricing. The
-cutoff time was not established. **No live Jev request was made to test the
-promotion.** A read-only credits request validated the locally supplied Gateway
-key, but did not establish free pricing or evaluation access.
+cutoff time was not established. Two explicitly authorized access attempts were
+rejected with `customer_verification_required`; neither produced a Jev result
+or established free inference. A read-only credits request validated the locally
+supplied Gateway key, but did not establish free pricing or evaluation access.
+One historical rejection still retains its maximum pending billing evidence;
+the completed comparison uses OpenRouter instead.
 
 The parser requires complete token usage, finite Choice probabilities, routing
 metadata, generation ID and decimal-string `cost`, `surchargeCost` and
@@ -191,7 +195,7 @@ Records carry `route: "vercel-ai-gateway"` and the returned alias
 does not establish an immutable upstream model revision. Raw routing metadata
 and generation IDs remain private. The public replay identifies the Gateway
 route, and decision latency includes the intermediary. No Gateway measurements
-have been added to the published GPT-only dataset.
+have been added to the published comparison; recorded Jev trials use OpenRouter.
 
 ### Jev through OpenRouter
 
@@ -226,6 +230,13 @@ TypeSafe. The adapter requires that provider in the response, a generation ID,
 snake-case token usage, valid probabilities, and a numeric `usage.cost`.
 Missing or over-bound usage/cost fails closed with the maximum reservation held.
 It settles the reported debit rather than substituting a list-price estimate.
+
+Development responses were observed with hundredth-rounded probabilities whose
+sum was 0.99. For this route only, when every probability is on that grid, the
+sum check permits at most half a hundredth per option of rounding error.
+Values, keys and the chosen option are still validated; raw probabilities are
+preserved without normalization. Other distributions retain the stricter sum
+tolerance. This is response-format handling, not confidence-based decision gating.
 
 Responses must name `typesafe/jev-1.13` or the verified dated identifier
 `typesafe/jev-1.13-20260917`. Only the latter is recorded as `modelVersion`;
@@ -341,7 +352,7 @@ explicitly fixes these settings and disables SDK logs.
    development, smoke calls, evaluation, and explicit retries**.
 4. Persist and flush the reservation before acquiring Azure tokens or sending a
    model request. One unresolved reservation blocks other processes/providers
-   unless the one-call retained-maximum exception below was explicitly authorized;
+   unless the bounded retained-maximum exception below was explicitly authorized;
    a process-wide guard also enforces concurrency one.
 5. Both direct-provider SDKs set retries to zero on the client and request.
    Gateway and OpenRouter use one built-in fetch call without a retry loop. The transport also
@@ -371,6 +382,11 @@ explicitly fixes these settings and disables SDK logs.
    active requests, cost overruns, or other failures. `doctor` reports unresolved
    entries, retained maximum USD, and available authorizations separately.
    After that one call, the unresolved entry blocks further reservations again.
+   A separately authorized experiment can use
+   `authorizeAdditionalCalls(id, count, terminalEvidence)` with an explicit
+   positive integer count. This does not create an unlimited exception: every
+   reservation consumes one allowance, the existing call and dollar caps still
+   apply, and any new unknown request immediately blocks the remainder.
 9. Locks are never auto-expired or stolen. For a crash lock, first verify the
    recorded process and any in-flight request are no longer running; preserve the
    ledger/evidence, remove only that confirmed stale lock, and reconcile any

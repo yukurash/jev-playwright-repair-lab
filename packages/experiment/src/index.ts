@@ -1,7 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { ProviderId, PublicDataset, TrialResult } from "@repair-lab/core";
+import { parseManifest } from "./manifest.js";
+import { parseComparison, validateComparisonTrials } from "./public-comparison.js";
 export { parseManifest, type ExperimentManifest } from "./manifest.js";
 
 function canonicalDestination(path: string): string {
@@ -218,5 +221,104 @@ export function publicDataset(trials: TrialResult[], publicationApproved: boolea
     sourceSha: trials[0]?.sourceSha ?? null,
     publicationApproved: true,
     trials: projected,
+  };
+}
+
+export interface FinalComparisonRun {
+  manifest: unknown;
+  completion: unknown;
+  schedule: unknown;
+  trials: TrialResult[];
+}
+
+export async function readFinalComparisonRun(directory: string): Promise<FinalComparisonRun> {
+  const readJson = async (name: string): Promise<unknown> => JSON.parse(await readFile(join(directory, name), "utf8"));
+  const [manifest, completion, schedule, trials] = await Promise.all([
+    readJson("manifest.json"), readJson("completion.json"), readJson("schedule.json"),
+    readTrials(join(directory, "results.json")),
+  ]);
+  await Promise.all(trials.map(async (trial, index) => {
+    const original = await readJson(`trial-${String(index).padStart(4, "0")}.json`);
+    if (!isDeepStrictEqual(trial, original)) throw new Error("Aggregate results differ from original trial records");
+  }));
+  return { manifest, completion, schedule, trials };
+}
+
+export function publicComparisonDataset(runs: readonly FinalComparisonRun[], publicationApproved: boolean): PublicDataset {
+  if (!publicationApproved) throw new Error("Confirm publication permission before exporting any results");
+  if (runs.length < 2 || runs.length > 3) throw new Error("Comparison requires two or three distinct single-provider final runs");
+  const manifests = runs.map((run) => parseManifest(run.manifest));
+  const reference = manifests[0]!;
+  const expectedCaseIds = [...reference.caseIds].sort();
+  const providers = new Set<ProviderId>();
+  const provenance = runs.map((run, index) => {
+    const manifest = manifests[index]!;
+    if (manifest.split !== "final" || manifest.providers.length !== 1) {
+      throw new Error("Comparison requires frozen final runs with one provider each");
+    }
+    const provider = manifest.providers[0]!;
+    if (providers.has(provider)) throw new Error("Duplicate comparison provider");
+    providers.add(provider);
+    if (JSON.stringify([...manifest.caseIds].sort()) !== JSON.stringify(expectedCaseIds) ||
+        manifest.seed !== reference.seed || manifest.repetitions !== reference.repetitions ||
+        manifest.lockfileSha256 !== reference.lockfileSha256 || manifest.instructionSha256 !== reference.instructionSha256) {
+      throw new Error("Comparison manifests differ in case sets, seed, repetitions, or shared hashes");
+    }
+    const count = manifest.caseIds.length * manifest.repetitions;
+    const completion = run.completion;
+    if (!record(completion) || completion.status !== "completed" ||
+        completion.expectedTrials !== count || completion.recordedTrials !== count ||
+        !Array.isArray(completion.remainingTrials) || completion.remainingTrials.length !== 0 || completion.error !== null ||
+        run.trials.length !== count) {
+      throw new Error("Comparison requires complete final runs without errors or remaining trials");
+    }
+    if (!Array.isArray(run.schedule) || run.schedule.length !== count) throw new Error("Incomplete comparison schedule");
+    const repetitions = new Set<string>();
+    const times: number[] = [];
+    for (const [ordinal, task] of run.schedule.entries()) {
+      const trial = run.trials[ordinal]!;
+      assertTrial(trial);
+      if (!record(task) || typeof task.caseId !== "string" || !manifest.caseIds.includes(task.caseId) ||
+          task.provider !== provider || typeof task.repetition !== "number" || !Number.isInteger(task.repetition) ||
+          task.repetition < 0 || task.repetition >= manifest.repetitions) {
+        throw new Error("Invalid comparison schedule repetition");
+      }
+      const key = `${task.caseId}:${task.repetition}`;
+      if (repetitions.has(key)) throw new Error("Duplicate comparison schedule repetition");
+      repetitions.add(key);
+      if (trial.caseId !== task.caseId || trial.provider !== task.provider ||
+          trial.sourceSha !== manifest.sourceSha || !/^[a-f0-9]{40}$/.test(trial.sourceSha) ||
+          !Number.isFinite(Date.parse(trial.recordedAt))) {
+        throw new Error("Comparison trial differs from its manifest or schedule");
+      }
+      times.push(Date.parse(trial.recordedAt));
+    }
+    const frozenSchedule = shuffled(manifest.caseIds, manifest.seed).flatMap((caseId) =>
+      Array.from({ length: manifest.repetitions }, (_, repetition) => ({ caseId, provider, repetition })));
+    if (!isDeepStrictEqual(run.schedule, frozenSchedule)) throw new Error("Comparison schedule differs from its frozen seed and case order");
+    return {
+      provider, sourceSha: manifest.sourceSha, frozenAt: manifest.frozenAt,
+      firstRecordedAt: new Date(Math.min(...times)).toISOString(),
+      lastRecordedAt: new Date(Math.max(...times)).toISOString(),
+      seed: manifest.seed, repetitions: manifest.repetitions, trialCount: count,
+    };
+  });
+  const comparison = parseComparison({
+    kind: "separate-final-runs", split: "final", caseIds: expectedCaseIds,
+    seed: reference.seed, repetitions: reference.repetitions,
+    lockfileSha256: reference.lockfileSha256, instructionSha256: reference.instructionSha256,
+    runs: provenance,
+  });
+  const trials = runs.flatMap((run) => run.trials);
+  validateComparisonTrials(comparison, trials);
+  const sources = new Set(manifests.map((manifest) => manifest.sourceSha));
+  return {
+    schemaVersion: 1,
+    label: "Recorded final comparison; separate provider schedules",
+    generatedAt: new Date().toISOString(),
+    sourceSha: sources.size === 1 ? reference.sourceSha : null,
+    publicationApproved: true,
+    comparison,
+    trials: runs.flatMap((run) => publicDataset(run.trials, true).trials),
   };
 }

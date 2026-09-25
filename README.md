@@ -3,14 +3,17 @@
 Build a locator-only Playwright repair tool and compare deterministic rules,
 Azure OpenAI GPT-5.5, and Jev on the same finite choices.
 
-The first **GPT-5.5-only** evaluation is recorded: 108 final trials, including
-90 API decisions and 18 deterministic guards. Jev has not been measured, and
-this release is not a model-to-model comparison. See the
-[measured results and limitations](docs/gpt-5.5-results.md).
+The three-way evaluation is recorded: **324 final trials**, 108 per strategy.
+Correct repairs were **30/48 for the lexical rules and 48/48 for both GPT-5.5
+and Jev**. Each model made 90 API decisions, with 18 additional code guards.
+The runs used matching tasks but separate schedules and different API routes;
+latency and cost ratios are descriptive, not a universal model ranking. See the
+[measured comparison and limitations](docs/comparison-results.md) and the
+[historical GPT-only report](docs/gpt-5.5-results.md).
 A passing test alone does not count as a successful repair:
 an independent target and application-state check must also pass.
 
-The public demo will replay recorded, sanitized results without API keys.
+The public demo replays recorded, sanitized results without API keys.
 Live model calls run only in the local CLI. Credentials, raw runs, and the
 Zenn article are kept outside this repository and all deployment artifacts.
 
@@ -72,7 +75,7 @@ Alternatively, select the explicit **Vercel AI Gateway** route and supply
 `AI_GATEWAY_API_KEY` in that same private environment file. Do not put a Gateway
 key in `TYPESAFE_API_KEY`. The route uses `typesafe-ai/jev`, not a verified pinned
 upstream revision. See [Gateway setup and free-only checks](docs/providers.md#jev-through-vercel-ai-gateway).
-Gateway support is mock-tested; the published Jev comparison remains unmeasured. API-key validity and a
+Gateway support is mock-tested; measured Jev results use OpenRouter. API-key validity and a
 promotional banner do not establish that an inference request is free.
 
 The explicit **OpenRouter** route uses `OPENROUTER_API_KEY` from the private
@@ -80,8 +83,8 @@ environment file and `typesafe/jev-1.13` through its System One endpoint.
 It does not require a TypeSafe or Vercel key. Credit purchases are manual and
 their fees are separate from inference debits. See
 [OpenRouter setup](docs/providers.md#jev-through-openrouter).
-Published comparison data remains GPT-only; connection support does not imply
-a completed Jev evaluation.
+The recorded comparison uses this route; full final results are separate from
+development and connectivity checks.
 
 Use an existing Azure OpenAI GPT-5.5 deployment with Azure CLI / Entra ID
 authentication. This repository does not provision Azure infrastructure or
@@ -139,7 +142,7 @@ successful repair or an unannounced fallback to another provider.
 
 [GitHub Pages](https://yukurash.github.io/jev-playwright-repair-lab/) is a keyless
 **recorded replay**, not a hosted inference endpoint. It currently shows all
-108 final GPT-5.5-strategy trials and explicitly labels Jev as unmeasured.
+324 final trials across rules, GPT-5.5 and Jev, with separate-run provenance.
 An empty dataset instead shows a clearly marked conceptual walkthrough.
 Do not mistake animation time for actual inference latency.
 

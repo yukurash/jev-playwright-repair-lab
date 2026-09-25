@@ -1,4 +1,5 @@
 import type { Candidate, PublicDataset, TrialResult, Usage } from "../../../packages/core/src/index";
+import { parseComparison, validateComparisonTrials } from "../../../packages/experiment/src/public-comparison";
 
 const statuses = ["repaired", "rejected", "abstained", "unsupported", "unchanged", "error"];
 const categories = ["rename", "container", "ambiguous", "missing", "regression", "guard"];
@@ -19,7 +20,7 @@ function text(value: unknown, path: string): asserts value is string {
   if (typeof value !== "string") fail(path);
 }
 
-function boolean(value: unknown, path: string): void {
+function boolean(value: unknown, path: string): asserts value is boolean {
   if (typeof value !== "boolean") fail(path);
 }
 
@@ -27,7 +28,7 @@ function number(value: unknown, path: string): asserts value is number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) fail(path);
 }
 
-function date(value: unknown, path: string): void {
+function date(value: unknown, path: string): asserts value is string {
   text(value, path);
   if (!Number.isFinite(Date.parse(value))) fail(path);
 }
@@ -128,11 +129,27 @@ export function parseDataset(value: unknown): PublicDataset {
   }
   boolean(dataset.publicationApproved, "publicationApproved");
   if (!Array.isArray(dataset.trials)) fail("trials");
-  dataset.trials.forEach((trial, i) => validateTrial(trial, `trials[${i}]`));
-  if (dataset.trials.length && dataset.publicationApproved !== true) {
+  const trials = dataset.trials.map((trial: unknown, i: number) => {
+    validateTrial(trial, `trials[${i}]`);
+    return trial;
+  });
+  if (trials.length && dataset.publicationApproved !== true) {
     fail("publicationApproved: 未承認の結果は公開できません");
   }
-  return dataset as unknown as PublicDataset;
+  const comparison = dataset.comparison === undefined ? undefined : parseComparison(dataset.comparison);
+  const sources = new Set(trials.map((trial) => trial.sourceSha));
+  if (comparison) {
+    validateComparisonTrials(comparison, trials);
+    if (dataset.sourceSha !== (sources.size === 1 ? trials[0]!.sourceSha : null)) fail("comparison.sourceSha");
+  } else if (sources.size > 1 || (trials.length && dataset.sourceSha !== trials[0]!.sourceSha)) {
+    fail("sourceSha: 異なるソースの比較には検証済み provenance が必要です");
+  }
+  if (trials.length && dataset.generatedAt === null) fail("generatedAt");
+  return {
+    schemaVersion: 1, label: dataset.label, generatedAt: dataset.generatedAt,
+    sourceSha: dataset.sourceSha, publicationApproved: dataset.publicationApproved,
+    trials, ...(comparison ? { comparison } : {}),
+  };
 }
 
 export function describeTrials(trials: TrialResult[]) {

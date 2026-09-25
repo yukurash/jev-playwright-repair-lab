@@ -5,10 +5,10 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { DECISION_INSTRUCTION, type DecisionProvider, type ProviderId, type TrialResult } from "@repair-lab/core";
+import { DECISION_INSTRUCTION, type DecisionProvider, type ProviderId, type PublicDataset, type TrialResult } from "@repair-lab/core";
 import { capture, cases, runCase } from "@repair-lab/engine";
 import { BudgetLedger, createProvider, inspectConfiguration, loadConfiguration } from "@repair-lab/providers";
-import { assertPrivatePath, parseManifest, publicDataset, readTrials, shuffled, summarize, writeJsonExclusive, type ExperimentManifest } from "@repair-lab/experiment";
+import { assertPrivatePath, parseManifest, publicComparisonDataset, publicDataset, readFinalComparisonRun, readTrials, shuffled, summarize, writeJsonExclusive, type ExperimentManifest } from "@repair-lab/experiment";
 import { inspectPublicText, inspectSnapshot } from "../../../scripts/public-policy.js";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
@@ -19,6 +19,7 @@ const { values, positionals } = parseArgs({
     provider: { type: "string" },
     manifest: { type: "string" },
     run: { type: "string" },
+    "compare-with": { type: "string", multiple: true },
     config: { type: "string" },
     "private-dir": { type: "string" },
     split: { type: "string" },
@@ -33,7 +34,7 @@ const { values, positionals } = parseArgs({
 const privateRoot = assertPrivatePath(values["private-dir"] ?? resolve(repository, "..", "jev-playwright-repair-lab-private"), repository);
 const configPath = assertPrivatePath(values.config ?? join(privateRoot, "local-config", "providers.json"), repository);
 const environmentPath = join(privateRoot, "local-config", "providers.env");
-if (existsSync(environmentPath)) process.loadEnvFile(environmentPath);
+if (!["export-public", "export-comparison"].includes(positionals[0] ?? "") && existsSync(environmentPath)) process.loadEnvFile(environmentPath);
 
 function git(...args: string[]): string {
   return execFileSync("git", args, { cwd: repository, encoding: "utf8" }).trim();
@@ -189,12 +190,26 @@ async function evaluate(): Promise<void> {
   if (interrupted) throw new Error(interrupted);
 }
 
+async function writePublicDataset(data: PublicDataset): Promise<void> {
+  const text = `${JSON.stringify(data, null, 2)}\n`;
+  const issues = inspectPublicText("data/public/results.json", text);
+  for (const trial of data.trials) issues.push(...inspectSnapshot(trial.beforeHtml), ...inspectSnapshot(trial.afterHtml));
+  if (issues.length) throw new Error(`Export rejected:\n${issues.join("\n")}`);
+  const destination = join(repository, "data", "public", "results.json");
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  await mkdir(dirname(destination), { recursive: true });
+  await writeFile(temporary, text, { flag: "wx" });
+  await rename(temporary, destination);
+  console.log(`Exported ${data.trials.length} allowlisted recorded trials; run npm run verify before publishing.`);
+}
+
 async function main(): Promise<void> {
   if (values.help || positionals.length !== 1) {
-    console.log("Commands: doctor, capture --case ID, repair --case ID --provider rule|azure|jev [--live], freeze --split development|calibration|final, evaluate --manifest PATH [--live], summarize --run ID, export-public --run ID --confirm-publication, init-budget --confirm-new-budget");
+    console.log("Commands: doctor, capture --case ID, repair --case ID --provider rule|azure|jev [--live], freeze --split development|calibration|final, evaluate --manifest PATH [--live], summarize --run ID, export-public --run ID --confirm-publication, export-comparison --run ID --compare-with ID [--compare-with ID] --confirm-publication, init-budget --confirm-new-budget");
     if (!values.help) process.exitCode = 2;
     return;
   }
+  if (values["compare-with"] && positionals[0] !== "export-comparison") throw new Error("--compare-with is only supported by export-comparison");
   switch (positionals[0]) {
     case "doctor": {
       const inspection = await inspectConfiguration(existsSync(configPath) ? configPath : undefined);
@@ -259,16 +274,18 @@ async function main(): Promise<void> {
         if (!config.approvals.publicationApproved) throw new Error("Live-result publication is not approved in private configuration");
       }
       const data = publicDataset(trials, values["confirm-publication"]);
-      const text = `${JSON.stringify(data, null, 2)}\n`;
-      const issues = inspectPublicText("data/public/results.json", text);
-      for (const trial of data.trials) issues.push(...inspectSnapshot(trial.beforeHtml), ...inspectSnapshot(trial.afterHtml));
-      if (issues.length) throw new Error(`Export rejected:\n${issues.join("\n")}`);
-      const destination = join(repository, "data", "public", "results.json");
-      const temporary = `${destination}.${randomUUID()}.tmp`;
-      await mkdir(dirname(destination), { recursive: true });
-      await writeFile(temporary, text, { flag: "wx" });
-      await rename(temporary, destination);
-      console.log(`Exported ${data.trials.length} allowlisted recorded trials; run npm run verify before publishing.`);
+      await writePublicDataset(data);
+      break;
+    }
+    case "export-comparison": {
+      if (!values["confirm-publication"]) throw new Error("Confirm publication permission before exporting any results");
+      if (!values["compare-with"]?.length) throw new Error("Comparison requires --compare-with for each additional final run");
+      const directories = [required(values.run, "run"), ...values["compare-with"]].map(runPath);
+      if (new Set(directories).size !== directories.length) throw new Error("Duplicate comparison run");
+      const config = await loadConfiguration(configPath);
+      if (!config.approvals.publicationApproved) throw new Error("Comparison publication is not approved in private configuration");
+      const runs = await Promise.all(directories.map(readFinalComparisonRun));
+      await writePublicDataset(publicComparisonDataset(runs, true));
       break;
     }
     case "init-budget": {

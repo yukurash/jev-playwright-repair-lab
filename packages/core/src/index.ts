@@ -95,6 +95,29 @@ export interface PublicDataset {
   sourceSha: string | null;
   publicationApproved: boolean;
   trials: TrialResult[];
+  comparison?: PublicComparison;
+}
+
+export interface PublicComparisonRun {
+  provider: ProviderId;
+  sourceSha: string;
+  frozenAt: string;
+  firstRecordedAt: string;
+  lastRecordedAt: string;
+  seed: number;
+  repetitions: number;
+  trialCount: number;
+}
+
+export interface PublicComparison {
+  kind: "separate-final-runs";
+  split: "final";
+  caseIds: string[];
+  seed: number;
+  repetitions: number;
+  lockfileSha256: string;
+  instructionSha256: string;
+  runs: PublicComparisonRun[];
 }
 
 export const RESERVED_CHOICES = ["NO_REPAIR", "ABSTAIN"] as const;

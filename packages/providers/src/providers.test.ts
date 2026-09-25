@@ -139,6 +139,33 @@ function mockResponse(body: unknown, status = 200) {
 }
 
 describe("persistent budget", () => {
+  it("bounds an explicitly authorized batch and retains unknown cost across restarts", async () => {
+    const entry = await ledger.reserve("jev", 1, 100, 100);
+    await ledger.markUnknown(entry.id, "PERMISSION");
+    for (const count of [0, -1, 1.5, NaN, 1000]) {
+      await expect(ledger.authorizeAdditionalCalls(entry.id, count, "Test batch approval")).rejects.toThrow();
+    }
+    await ledger.authorizeAdditionalCalls(entry.id, 2, "Test: verified terminal rejection; user authorizes exactly two calls");
+    for (let i = 0; i < 2; i++) {
+      const restarted = new BudgetLedger(ledger.path);
+      const next = await restarted.reserve("jev", 1, 100, 100);
+      await restarted.settle(next.id, 0.5, { inputTokens: 10, outputTokens: 1 });
+    }
+    expect(committedNanos(await ledger.inspect())).toBe(2_000_000_000);
+    await expect(ledger.reserve("jev", 0, 100, 100)).rejects.toMatchObject({ code: "UNRESOLVED_BILLING" });
+    expect((await ledger.inspect()).reservations[0]?.status).toBe("unknown");
+  });
+
+  it("stops an authorized batch immediately when a new request becomes unknown", async () => {
+    const old = await ledger.reserve("jev", 1, 100, 100);
+    await ledger.markUnknown(old.id, "PERMISSION");
+    await ledger.authorizeAdditionalCalls(old.id, 3, "Test: explicit three-call authorization");
+    const next = await ledger.reserve("jev", 1, 100, 100);
+    await ledger.markUnknown(next.id, "TIMEOUT");
+    await expect(ledger.reserve("jev", 1, 100, 100)).rejects.toMatchObject({ code: "UNRESOLVED_BILLING" });
+    expect(committedNanos(await ledger.inspect())).toBe(2_000_000_000);
+  });
+
   it("retains a terminal rejection's unknown cost while authorizing only one additional reservation", async () => {
     const entry = await ledger.reserve("jev", 6, 100, 100);
     await ledger.markUnknown(entry.id, "PERMISSION");
@@ -368,6 +395,22 @@ describe("config and deterministic baseline", () => {
 });
 
 describe("OpenRouter System One HTTP transport (mock fetch only)", () => {
+  it.each([0.09, 0.11])("preserves hundredth-rounded probabilities with ABSTAIN=%s without renormalizing", async (abstain) => {
+    const probabilities = { c1: 0.6, NO_REPAIR: 0.3, ABSTAIN: abstain };
+    mockResponse({ ...openRouterResponse(), answers: { decision: { type: "choice", choice: "c1", probabilities } } });
+    const result = await buildLiveProvider("jev", openRouterConfig(), ledger).decide(request);
+    expect(result.probabilities).toEqual(probabilities);
+    expect(result.choice).toBe("c1");
+  });
+
+  it.each([0, 0.08, 0.12, 0.091])("rejects sums outside the observed rounding envelope with ABSTAIN=%s", async (abstain) => {
+    mockResponse({ ...openRouterResponse(), answers: {
+      decision: { type: "choice", choice: "c1", probabilities: { c1: 0.6, NO_REPAIR: 0.3, ABSTAIN: abstain } },
+    } });
+    await expect(buildLiveProvider("jev", openRouterConfig(), ledger).decide(request)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    expect((await ledger.inspect()).reservations[0]?.status).toBe("unknown");
+  });
+
   it("requires the explicit route, namespace and dedicated key", async () => {
     const cfg = openRouterConfig();
     expect(validateConfiguration(cfg)).toEqual(cfg);

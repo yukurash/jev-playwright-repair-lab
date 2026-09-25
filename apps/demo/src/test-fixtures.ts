@@ -42,3 +42,31 @@ export function datasetFixture(trials: TrialResult[] = []): PublicDataset {
     trials,
   };
 }
+
+export function comparisonFixture(): PublicDataset {
+  const providers = ["azure", "jev", "rule"] as const;
+  const trials = providers.flatMap((provider) => Array.from({ length: 3 }, (_, repetition) => trialFixture({
+    provider, split: "final",
+    model: provider === "azure" ? "gpt-5.5" : provider,
+    sourceSha: (provider === "azure" ? "a" : "b").repeat(40),
+    recordedAt: `2026-01-0${providers.indexOf(provider) + 1}T00:01:0${repetition}.000Z`,
+    inference: provider === "rule" ? "deterministic" : "live",
+    ...(provider === "rule" ? {} : { usage: { inputTokens: 100, outputTokens: 2 } }),
+    ...(provider === "jev" ? { route: "openrouter" } : {}),
+  })));
+  return {
+    ...datasetFixture(trials), sourceSha: null,
+    generatedAt: "2026-01-04T00:00:00.000Z",
+    comparison: {
+      kind: "separate-final-runs", split: "final", caseIds: ["test-rename"], seed: 42, repetitions: 3,
+      lockfileSha256: "c".repeat(64), instructionSha256: "d".repeat(64),
+      runs: providers.map((provider, index) => ({
+        provider, sourceSha: (provider === "azure" ? "a" : "b").repeat(40),
+        frozenAt: `2026-01-0${index + 1}T00:00:00.000Z`,
+        firstRecordedAt: `2026-01-0${index + 1}T00:01:00.000Z`,
+        lastRecordedAt: `2026-01-0${index + 1}T00:01:02.000Z`,
+        seed: 42, repetitions: 3, trialCount: 3,
+      })),
+    },
+  };
+}

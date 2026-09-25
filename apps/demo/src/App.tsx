@@ -225,6 +225,26 @@ function Results({ dataset }: { dataset: PublicDataset }) {
   </section>;
 }
 
+function ComparisonProvenance({ dataset }: { dataset: PublicDataset }) {
+  const comparison = dataset.comparison;
+  if (!comparison) return null;
+  return <section className="comparison-provenance" aria-label="比較の条件と出典">
+    <h2>別日程の final 実測を比較しています</h2>
+    <p className="comparison-caveat"><strong>方式ごとに別スケジュールで収集し、方式間のランダム化・交互実行はしていません。</strong>判断時間は接続経路・中継の影響を含み、コストの計上基準も異なります。速度・費用を同条件の性能差として解釈しないでください。</p>
+    <p>同一の {comparison.caseIds.length} ケース × {comparison.repetitions} 反復 / 方式、seed {comparison.seed}。保存された画面・候補・元テスト・期待ラベルの一致を検証済みです。ソース SHA は実行ごとに表示し、異なるコミットを一つにまとめません。</p>
+    <ul className="provenance-runs">{comparison.runs.map((run) => <li key={run.provider}>
+      <h3>{providerNames[run.provider]} <span>{run.trialCount} 試行 / {run.repetitions} 反復 / seed {run.seed}</span></h3>
+      <p className="sha">Source SHA: <code>{run.sourceSha}</code></p>
+      <p>記録期間（UTC）: <time>{run.firstRecordedAt}</time> ～ <time>{run.lastRecordedAt}</time></p>
+      <p>凍結（UTC）: <time>{run.frozenAt}</time></p>
+    </li>)}</ul>
+    <details><summary>共通の実験入力ハッシュ</summary><dl className="metric-list">
+      <div><dt>instruction SHA-256</dt><dd className="sha">{comparison.instructionSha256}</dd></div>
+      <div><dt>lockfile SHA-256</dt><dd className="sha">{comparison.lockfileSha256}</dd></div>
+    </dl><p>入力の一致は、収集時刻・プロバイダー実装・課金経路まで同一であることを意味しません。</p></details>
+  </section>;
+}
+
 function Reproduce() {
   return <section className="section reproduce-section" id="reproduce">
     <div><p className="eyebrow"><span>02</span> REPRODUCIBLE BY DESIGN</p><h2>ブラウザでは、読む。<br />ローカルで、確かめる。</h2><p>このページは公開用データをビルド時に読み込む静的ビューアです。APIキー入力、ライブ推論、Playwrightの実行機能はありません。</p><a href={repository} target="_blank" rel="noreferrer" className="button-link">コードと再現手順を開く <Icon name="external" /></a></div>
@@ -262,11 +282,12 @@ export function App({ dataset }: { dataset: PublicDataset }) {
           <div className="collection-main"><span className={`status-dot ${pendingModels.length ? "pending" : ""}`} /><span>API比較</span><h2>{collectionTitle}</h2><p>{empty ? "まずは説明ケースで、修復と検証の流れを確認できます。" : `${dataset.trials.length} 件の保存済み試行。API方式の試行 ${live} 件 / 決定論的実行（ガードを含む）${dataset.trials.length - live} 件。${pendingModels.length ? ` ${pendingModels.join("・")}は未実測です。方式間の優劣はまだ比較できません。` : ""}`}</p></div>
           <span className="collection-detail">{dataset.publicationApproved ? "公開承認済みの記録" : "方式の優劣・性能値は未掲載"}</span>
         </section>
+        <ComparisonProvenance dataset={dataset} />
         {empty ? <Walkthrough /> : <Results dataset={dataset} />}
         <div className="principles"><article><Icon name="code" /><div><h3>選ぶ部分だけを交換</h3><p>候補の抽出と検証は共通。判断役に同じ候補・文脈を渡します。</p></div></article><article><Icon name="shield" /><div><h3>直せるのは、ロケータだけ</h3><p>アサーションはそのまま。対象なし・曖昧な場合は停止できます。</p></div></article><article><Icon name="check" /><div><h3>成功を、独立して検証</h3><p>自作fixtureと限定構文が対象。汎用的な安全性を保証するものではありません。</p></div></article></div>
         <Reproduce />
       </main>
-      <footer className="site-footer"><div><strong>jev / repair lab</strong><p>正しい修復を、確かめる。</p></div><div className="footer-meta"><span>{dataset.label}</span><span>Schema v{dataset.schemaVersion} · generated: {dataset.generatedAt ?? "未生成"}</span><span className="sha">Source SHA: {dataset.sourceSha ?? "未記録"}</span><a href={`${repository}/blob/main/LICENSE`} target="_blank" rel="noreferrer">MIT License ↗</a></div></footer>
+      <footer className="site-footer"><div><strong>jev / repair lab</strong><p>正しい修復を、確かめる。</p></div><div className="footer-meta"><span>{dataset.label}</span><span>Schema v{dataset.schemaVersion} · generated: {dataset.generatedAt ?? "未生成"}</span><span className="sha">Source SHA: {dataset.sourceSha ?? (dataset.comparison ? "複数コミット — 方式別の出典を参照" : "未記録")}</span><a href={`${repository}/blob/main/LICENSE`} target="_blank" rel="noreferrer">MIT License ↗</a></div></footer>
     </div>
   </>;
 }
