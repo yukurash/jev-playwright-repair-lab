@@ -1,5 +1,10 @@
 # GPT-5.5-only evaluation: 2026-09-25
 
+> Historical report for the first, GPT-only collection. Its measurements and
+> accounting below describe that point in time. The later
+> [three-way comparison](comparison-results.md) preserves all 108 GPT records
+> and adds separately collected Jev/rule runs with explicit provenance.
+
 This is an engineering experiment report, not a completed Jev comparison.
 Jev has not been called. The public dataset contains the entire final run,
 including abstentions, rejections, and deterministic guards, not selected wins.

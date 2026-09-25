@@ -2,11 +2,12 @@
 
 ## Status
 
-The [first GPT-5.5-only evaluation](gpt-5.5-results.md) was completed on
-2026-09-25 JST. Its complete final run is public: 108 scheduled/recorded trials,
-90 API decisions, and 18 deterministic guards. Jev has not been measured.
-There is no Jev/GPT-5.5 comparison yet. The explanatory empty-state demo remains
-distinct from these recorded results.
+The [three-way comparison](comparison-results.md) was completed on 2026-09-25
+JST: 324 scheduled/recorded final trials, 108 per strategy. GPT and Jev each
+made 90 API decisions; all three strategies had 18 code-guard trials. The
+[original GPT-only run](gpt-5.5-results.md) is preserved unchanged. These were
+separate schedules, not cross-provider interleaving. The explanatory empty-state
+demo remains distinct from recorded results.
 
 ## What is being compared
 
@@ -33,12 +34,14 @@ patterns; they are not a representative sample of production applications.
 
 Before final evaluation, freeze the tested Git SHA, lockfile hash, instruction
 hash, case IDs, seed, repetitions, and provider configuration. Run the same cases
-in a seeded order and interleave providers. Final evaluation refuses dirty trees,
+in a seeded order; interleave providers when collecting a joint run. The completed
+comparison instead used separate schedules, which must be disclosed rather than
+described as interleaved. Final evaluation refuses dirty trees,
 different SHAs, changed inputs, or cases from another split. Do not tune on final
 cases and subsequently call them unseen.
 
-The proposed final schedule is 36 variants, up to three repetitions per model:
-at most 216 model calls. Code guards can reduce the actual call count. Report
+The completed final schedule is 36 variants, three repetitions per strategy:
+324 trials and 180 model calls after code guards. Report
 scheduled trials, actual decisions, missing trials, and errors separately.
 Confirm pilot usage and applicable prices before claiming that the USD 10 budget
 can cover this schedule. Failed and uncertain calls consume reservations.
@@ -79,17 +82,25 @@ routing/charge metadata privately. Gateway latency includes an intermediary;
 the `typesafe-ai/jev` alias does not independently prove a pinned upstream
 revision. Report the actual Gateway debit separately from its market price,
 and disclose promotional pricing rather than presenting free promotional calls
-as a permanent cost advantage. The adapter is mock-tested; no live Jev results
-are included in the public dataset. The GPT-only run remains unchanged. A later comparison must
-disclose separately run schedules/source SHAs and verify unchanged fixtures and
+as a permanent cost advantage. The Gateway adapter is mock-tested; no Gateway
+measurements are included in the public dataset. The original GPT run remains
+unchanged. The completed OpenRouter comparison discloses separate schedules/source
+SHAs and verifies unchanged fixtures and
 instructions; do not present it as an interleaved, single-source experiment.
 
 For OpenRouter, record `route: "openrouter"`, returned model ID, and numeric
 `usage.cost`. Record a dated version only when the response actually contains it.
 Latency includes OpenRouter; credit purchase fees are not per-request inference
-costs. An API smoke test is not the final Jev evaluation and does not change the
-published GPT-only dataset. Unknown charges held at their maximum remain
-unknown, even if a user authorizes one later request with that maximum retained.
+costs. Connectivity and development trials are excluded from final metrics but
+included in cost accounting. Unknown charges held at their maximum remain
+unknown, even if a user explicitly authorizes a bounded later experiment with
+that maximum retained.
+
+The first Jev development run stopped at a response whose hundredth-rounded
+probabilities summed to 0.99. Its record and verified charge were retained.
+Only the OpenRouter format parser was corrected before refreezing the completed
+development/final runs; no prompts or task logic were tuned. See the
+[comparison report](comparison-results.md) for full provenance and accounting.
 
 ## Runtime
 

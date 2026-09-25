@@ -173,9 +173,12 @@ free-tier eligibility are not proof of zero-priced inference.
 
 As of 2026-09-25, the public page advertised free promotional pricing through
 September 25, while the provider catalog reported nonzero input pricing. The
-cutoff time was not established. **No live Jev request was made to test the
-promotion.** A read-only credits request validated the locally supplied Gateway
-key, but did not establish free pricing or evaluation access.
+cutoff time was not established. Two explicitly authorized access attempts were
+rejected with `customer_verification_required`; neither produced a Jev result
+or established free inference. A read-only credits request validated the locally
+supplied Gateway key, but did not establish free pricing or evaluation access.
+One historical rejection still retains its maximum pending billing evidence;
+the completed comparison uses OpenRouter instead.
 
 The parser requires complete token usage, finite Choice probabilities, routing
 metadata, generation ID and decimal-string `cost`, `surchargeCost` and
@@ -192,7 +195,7 @@ Records carry `route: "vercel-ai-gateway"` and the returned alias
 does not establish an immutable upstream model revision. Raw routing metadata
 and generation IDs remain private. The public replay identifies the Gateway
 route, and decision latency includes the intermediary. No Gateway measurements
-have been added to the published GPT-only dataset.
+have been added to the published comparison; recorded Jev trials use OpenRouter.
 
 ### Jev through OpenRouter
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { chromium, expect as browserExpect, type Browser, type Page } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { build, preview, type PreviewServer } from "vite";
-import { datasetFixture, trialFixture } from "./test-fixtures";
+import { comparisonFixture, datasetFixture, trialFixture } from "./test-fixtures";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outputRoot = join(root, ".browser-test-output");
@@ -50,6 +50,8 @@ beforeAll(async () => {
     trialFixture({ caseId: "test-guard", title: "モデル未呼び出し", provider: "azure", model: "not-invoked", status: "unsupported", decision: null, expectedDecision: null, repairable: false, repairedTest: undefined, originalTestPassed: false, oraclePassed: null, targetCorrect: null, latency: { captureMs: 10, decisionMs: 0, validationMs: 0, totalMs: 10 } }),
   ]));
   await buildPreview("invalid", { ...datasetFixture(), schemaVersion: 99 });
+  await buildPreview("comparison", comparisonFixture());
+  await buildPreview("invalid-comparison", { ...comparisonFixture(), comparison: undefined });
 }, 120_000);
 
 afterAll(async () => {
@@ -59,6 +61,41 @@ afterAll(async () => {
 });
 
 describe("recorded-only comparison demo", () => {
+  it("prominently discloses separate schedules, route/cost caveats, and every run's source provenance", async () => {
+    const page = await open("comparison");
+    try {
+      const provenance = page.getByRole("region", { name: "比較の条件と出典" });
+      await browserExpect(provenance).toBeVisible();
+      await browserExpect(provenance).toContainText("方式間のランダム化・交互実行はしていません");
+      await browserExpect(provenance).toContainText("中継の影響");
+      await browserExpect(provenance).toContainText("コストの計上基準も異なります");
+      await browserExpect(provenance.locator(".provenance-runs li")).toHaveCount(3);
+      await browserExpect(provenance).toContainText("a".repeat(40));
+      await browserExpect(provenance).toContainText("b".repeat(40));
+      await browserExpect(provenance).toContainText("seed 42");
+      await browserExpect(provenance).toContainText("2026-01-03T00:01:02.000Z");
+      await browserExpect(page.getByLabel("保存された試行").locator("option")).toHaveCount(9);
+      await browserExpect(page.locator(".collection-status")).toContainText("API方式の試行 6 件");
+      await provenance.getByText("共通の実験入力ハッシュ").click();
+      await browserExpect(provenance).toContainText("c".repeat(64));
+      await browserExpect(page.locator(".footer-meta")).toContainText("複数コミット");
+      for (const provider of ["azure", "jev", "rule"]) {
+        await page.getByLabel("方式", { exact: true }).selectOption(provider);
+        await browserExpect(page.getByLabel("保存された試行").locator("option")).toHaveCount(3);
+      }
+      await page.setViewportSize({ width: 320, height: 812 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    } finally { await page.close(); }
+  });
+
+  it("does not display mixed-source records without validated comparison provenance", async () => {
+    const page = await open("invalid-comparison");
+    try {
+      await browserExpect(page.getByRole("alert")).toContainText("sourceSha");
+      expect(await page.locator(".collection-status").count()).toBe(0);
+    } finally { await page.close(); }
+  });
+
   it("honestly labels the empty state and supports keyboard walkthrough and theme toggling", async () => {
     const page = await open("empty");
     try {
