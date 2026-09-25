@@ -84,6 +84,13 @@ are available yet. The GPT-only run remains unchanged. A later comparison must
 disclose separately run schedules/source SHAs and verify unchanged fixtures and
 instructions; do not present it as an interleaved, single-source experiment.
 
+For OpenRouter, record `route: "openrouter"`, returned model ID, and numeric
+`usage.cost`. Record a dated version only when the response actually contains it.
+Latency includes OpenRouter; credit purchase fees are not per-request inference
+costs. An API smoke test is not the final Jev evaluation and does not change the
+published GPT-only dataset. Unknown charges held at their maximum remain
+unknown, even if a user authorizes one later request with that maximum retained.
+
 ## Runtime
 
 Playwright is pinned to 1.61.1 with Chromium 149.0.7827.55 (revision 1228).

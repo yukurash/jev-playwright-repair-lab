@@ -34,7 +34,8 @@ const result = await provider.decide(request);
 - `BudgetLedger(path, capUsd = 10)` exposes `initialize()`, `inspect()`,
   `reserve(provider, maximumUsd, inputTokenLimit, outputTokenLimit, maxCalls?)`,
   `settle(id, actualUsd, usage)`, `markUnknown(id, code)`, and
-  `reconcile(id, actualUsd, evidence)`.
+  `reconcile(id, actualUsd, evidence)`, and the explicitly authorized
+  `authorizeOneAdditionalCall(id, terminalEvidence)` described below.
 - `ProviderError` has `code` and optional `reservationId`. Error messages do not
   forward provider response bodies, endpoint names, keys, or SDK exception text.
 - `DEFAULT_LEDGER_PATH`, `AZURE_TOKEN_SCOPE`, `JEV_MODEL`, `MAX_BUDGET_USD`,
@@ -192,6 +193,49 @@ and generation IDs remain private. The public replay identifies the Gateway
 route, and decision latency includes the intermediary. No Gateway measurements
 have been added to the published GPT-only dataset.
 
+### Jev through OpenRouter
+
+Use `OPENROUTER_API_KEY` from the private environment file and select this
+explicit provider section:
+
+```json
+{
+  "route": "openrouter",
+  "model": "typesafe/jev-1.13",
+  "pricing": {
+    "inputUsdPerMillion": 0.042,
+    "outputUsdPerMillion": 0,
+    "fixedUsdPerRequest": 0,
+    "source": "https://openrouter.ai/api/v1/models/typesafe/jev-1.13/endpoints",
+    "verifiedAt": "2026-09-25"
+  }
+}
+```
+
+Recheck applicable pricing before authorizing live calls. Reuse the existing
+ledger, explicitly approve access/pricing/publication, and set `maxCalls` to
+the current reservation count plus the number of newly authorized calls.
+Never initialize a replacement ledger. No credit purchase or auto-top-up is
+performed by this adapter; purchase fees are separate from inference costs.
+
+The adapter sends the identical finite-choice task to
+`POST https://openrouter.ai/api/v1/systemone` using one bounded built-in fetch.
+It never substitutes a TypeSafe/Vercel key, retries, redirects, or falls back to
+another route. The catalog checked on the verification date lists one upstream,
+TypeSafe. The adapter requires that provider in the response, a generation ID,
+snake-case token usage, valid probabilities, and a numeric `usage.cost`.
+Missing or over-bound usage/cost fails closed with the maximum reservation held.
+It settles the reported debit rather than substituting a list-price estimate.
+
+Responses must name `typesafe/jev-1.13` or the verified dated identifier
+`typesafe/jev-1.13-20260917`. Only the latter is recorded as `modelVersion`;
+this is a returned provider identifier, not proof of immutable model weights.
+Confidence is optional and never invented. Records retain `route: "openrouter"`;
+decision latency includes the intermediary. Raw responses and generation IDs
+remain private, and no smoke test is automatically published.
+
+Protocol reference: [OpenRouter TypeSafe-compatible API](https://openrouter.ai/docs/guides/community/typesafe-sdk).
+
 ## Private configuration
 
 Create the config outside the checkout, normally in the sibling directory:
@@ -271,7 +315,8 @@ credentials. Paths and existing ancestors are resolved to reject symlink/junctio
 routes back into the public repository.
 
 Provide the Jev key only through the local process environment
-(`TYPESAFE_API_KEY` for direct access, `AI_GATEWAY_API_KEY` for Gateway).
+(`TYPESAFE_API_KEY` for direct access, `AI_GATEWAY_API_KEY` for Gateway,
+`OPENROUTER_API_KEY` for OpenRouter).
 The CLI also loads the private `local-config/providers.env` file.
 Never place a key in JSON, command history, a chat message, a
 test fixture, the public demo, Git, or an Actions secret for live PR execution.
@@ -295,10 +340,11 @@ explicitly fixes these settings and disables SDK logs.
    upward to integer nanodollars. The cap is at most USD 10 across **both providers,
    development, smoke calls, evaluation, and explicit retries**.
 4. Persist and flush the reservation before acquiring Azure tokens or sending a
-   model request. One unresolved reservation blocks other processes/providers;
+   model request. One unresolved reservation blocks other processes/providers
+   unless the one-call retained-maximum exception below was explicitly authorized;
    a process-wide guard also enforces concurrency one.
 5. Both direct-provider SDKs set retries to zero on the client and request.
-   Gateway uses one built-in fetch call without a retry loop. The transport also
+   Gateway and OpenRouter use one built-in fetch call without a retry loop. The transport also
    rejects a second attempt, unexpected URL/method, and HTTP redirects. It bounds
    response bytes. A total deadline aborts the call and includes credential wait.
 6. Settle only complete validated responses with valid usage within the reserved
@@ -306,7 +352,7 @@ explicitly fixes these settings and disables SDK logs.
    discount. A successful `NO_REPAIR` or `ABSTAIN` is still a billed decision.
 7. **Every post-reservation failure** (including timeout, authentication, refusal,
    malformed choice, unknown usage, or raw-record write failure) retains its
-   maximum reservation and blocks all further calls. Crashes leave `reserved`
+   maximum reservation and blocks further calls by default. Crashes leave `reserved`
    entries, which also block. No automatic release is possible.
 8. Recover only after confirming final provider billing **and that the request
    has terminated**, then explicitly call
@@ -314,6 +360,17 @@ explicitly fixes these settings and disables SDK logs.
    Reconciliation is a human-audited operation, not a retry/recovery heuristic.
    A verified charge above the cap is preserved and permanently prevents further
    reservations. Never reconcile to zero merely because an HTTP request failed.
+   If there is exactly one unknown reservation from a verified terminal
+   authentication/permission rejection, a user can instead explicitly authorize
+   `ledger.authorizeOneAdditionalCall(id, terminalEvidence)`. Evidence must
+   identify the terminal rejection and permission to proceed with its full maximum
+   still charged against the budget. This records a one-reservation allowance:
+   the original entry remains **unknown**, with no invented `actualNanos` or
+   zero-cost settlement. The allowance is consumed atomically by the next
+   reservation, even if that new request fails. It never applies to timeouts,
+   active requests, cost overruns, or other failures. `doctor` reports unresolved
+   entries, retained maximum USD, and available authorizations separately.
+   After that one call, the unresolved entry blocks further reservations again.
 9. Locks are never auto-expired or stolen. For a crash lock, first verify the
    recorded process and any in-flight request are no longer running; preserve the
    ledger/evidence, remove only that confirmed stale lock, and reconcile any

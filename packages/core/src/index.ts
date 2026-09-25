@@ -38,7 +38,7 @@ export interface ProviderResult {
   choice: string;
   model: string;
   modelVersion?: string;
-  route?: "vercel-ai-gateway";
+  route?: "vercel-ai-gateway" | "openrouter";
   latencyMs: number;
   usage?: Usage;
   costUsd?: number;
@@ -62,7 +62,7 @@ export interface TrialResult {
   provider: ProviderId;
   model: string;
   modelVersion?: string;
-  route?: "vercel-ai-gateway";
+  route?: "vercel-ai-gateway" | "openrouter";
   status: "repaired" | "rejected" | "abstained" | "unsupported" | "unchanged" | "error";
   decision: string | null;
   expectedDecision: string | null;

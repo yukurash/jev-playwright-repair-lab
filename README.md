@@ -75,6 +75,14 @@ upstream revision. See [Gateway setup and free-only checks](docs/providers.md#je
 Gateway support is mock-tested; Jev remains unmeasured. API-key validity and a
 promotional banner do not establish that an inference request is free.
 
+The explicit **OpenRouter** route uses `OPENROUTER_API_KEY` from the private
+environment file and `typesafe/jev-1.13` through its System One endpoint.
+It does not require a TypeSafe or Vercel key. Credit purchases are manual and
+their fees are separate from inference debits. See
+[OpenRouter setup](docs/providers.md#jev-through-openrouter).
+Published comparison data remains GPT-only; connection support does not imply
+a completed Jev evaluation.
+
 Use an existing Azure OpenAI GPT-5.5 deployment with Azure CLI / Entra ID
 authentication. This repository does not provision Azure infrastructure or
 silently switch models. See [provider configuration](docs/providers.md) for

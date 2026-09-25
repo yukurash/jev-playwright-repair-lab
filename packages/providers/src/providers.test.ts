@@ -7,7 +7,7 @@ import { getBearerTokenProvider } from "@azure/identity";
 import { DECISION_INSTRUCTION, decisionContext, type DecisionRequest } from "../../core/src/index.js";
 import { BudgetLedger, committedNanos, usdToNanos } from "./budget.js";
 import {
-  AZURE_TOKEN_SCOPE, DEFAULT_LEDGER_PATH, GATEWAY_JEV_MODEL, inspectConfiguration, loadConfiguration,
+  AZURE_TOKEN_SCOPE, DEFAULT_LEDGER_PATH, GATEWAY_JEV_MODEL, OPENROUTER_JEV_MODEL, OPENROUTER_JEV_REVISION, inspectConfiguration, loadConfiguration,
   jevCredentialName, validateConfiguration, verifyFreeOnly, verifyPrivatePath, type ProviderConfiguration,
 } from "./configuration.js";
 import { createProvider } from "./index.js";
@@ -100,6 +100,18 @@ function gatewayMetadata() {
 let directory: string;
 let ledger: BudgetLedger;
 
+function openRouterConfig(): ProviderConfiguration {
+  const base = config();
+  return { ...base, jev: { route: "openrouter", model: OPENROUTER_JEV_MODEL, pricing: base.jev!.pricing } };
+}
+
+function openRouterResponse(): Record<string, unknown> {
+  return {
+    ...jevResponse(), model: OPENROUTER_JEV_REVISION, provider: "TypeSafe", id: "gen-test-openrouter",
+    usage: { input_tokens: 100, output_tokens: 20, cost: 0.0000021 },
+  };
+}
+
 beforeEach(async () => {
   directory = resolve(dirname(fileURLToPath(import.meta.url)), `.test-state-${randomUUID()}`);
   await mkdir(directory);
@@ -107,6 +119,7 @@ beforeEach(async () => {
   await ledger.initialize();
   vi.stubEnv("TYPESAFE_API_KEY", "test-only-not-a-real-key");
   vi.stubEnv("AI_GATEWAY_API_KEY", "test-only-not-a-real-gateway-key");
+  vi.stubEnv("OPENROUTER_API_KEY", "test-only-not-a-real-openrouter-key");
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Unexpected network call"); }));
 });
 
@@ -126,6 +139,48 @@ function mockResponse(body: unknown, status = 200) {
 }
 
 describe("persistent budget", () => {
+  it("retains a terminal rejection's unknown cost while authorizing only one additional reservation", async () => {
+    const entry = await ledger.reserve("jev", 6, 100, 100);
+    await ledger.markUnknown(entry.id, "PERMISSION");
+    await ledger.authorizeOneAdditionalCall(entry.id, "Test: final HTTP 403 observed; user authorizes one call with retained maximum");
+    const restarted = new BudgetLedger(ledger.path);
+    expect((await restarted.inspect()).reservations[0]).toMatchObject({
+      status: "unknown", maximumNanos: 6_000_000_000, continuation: { maxCalls: 2 },
+    });
+    expect((await restarted.inspect()).reservations[0]?.actualNanos).toBeUndefined();
+    await expect(restarted.reserve("jev", 4.000000001, 100, 100)).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+    const next = await restarted.reserve("jev", 4, 100, 100);
+    await restarted.settle(next.id, 1, { inputTokens: 10, outputTokens: 1 });
+    expect(committedNanos(await restarted.inspect())).toBe(7_000_000_000);
+    await expect(restarted.reserve("azure", 0, 100, 100)).rejects.toMatchObject({ code: "UNRESOLVED_BILLING" });
+    await restarted.reconcile(entry.id, 0, "Test: later verified final zero billing and termination");
+    expect(committedNanos(await restarted.inspect())).toBe(1_000_000_000);
+  });
+
+  it.each(["TIMEOUT", "BOUND_EXCEEDED", "PROVIDER_FAILURE"])("never authorizes continuation for %s", async (code) => {
+    const entry = await ledger.reserve("jev", 1, 100, 100);
+    await expect(ledger.authorizeOneAdditionalCall(entry.id, "Still active")).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+    await ledger.markUnknown(entry.id, code);
+    await expect(ledger.authorizeOneAdditionalCall(entry.id, "Not a verified terminal authentication rejection"))
+      .rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+    expect((await ledger.inspect()).reservations[0]?.continuation).toBeUndefined();
+  });
+
+  it("consumes a continuation atomically and rejects malformed continuation records", async () => {
+    const entry = await ledger.reserve("jev", 1, 100, 100);
+    await ledger.markUnknown(entry.id, "AUTHENTICATION");
+    await expect(ledger.authorizeOneAdditionalCall(entry.id, "")).rejects.toThrow();
+    await ledger.authorizeOneAdditionalCall(entry.id, "Test: verified terminal 401 and explicit user permission");
+    const other = new BudgetLedger(ledger.path);
+    const results = await Promise.allSettled([ledger.reserve("jev", 1, 100, 100), other.reserve("jev", 1, 100, 100)]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    await expect(ledger.authorizeOneAdditionalCall(entry.id, "Cannot ignore the new in-flight request")).rejects.toThrow();
+    const snapshot = await ledger.inspect();
+    snapshot.reservations[0]!.failureCode = "TIMEOUT";
+    await writeFile(ledger.path, JSON.stringify(snapshot));
+    await expect(ledger.inspect()).rejects.toMatchObject({ code: "INVALID_LEDGER" });
+  });
+
   it("persists a reservation across instances and blocks Azure and Jev until reconciliation", async () => {
     const entry = await ledger.reserve("azure", 6, 100, 100);
     const restarted = new BudgetLedger(ledger.path);
@@ -309,6 +364,74 @@ describe("config and deterministic baseline", () => {
     expect(await rule.decide({ ...request, oldContext: "", candidates: [{ id: "c1", locator: { kind: "role", role: "button", name: "Delete" }, context: "" }] }))
       .toMatchObject({ choice: "NO_REPAIR" });
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("OpenRouter System One HTTP transport (mock fetch only)", () => {
+  it("requires the explicit route, namespace and dedicated key", async () => {
+    const cfg = openRouterConfig();
+    expect(validateConfiguration(cfg)).toEqual(cfg);
+    expect(jevCredentialName(cfg)).toBe("OPENROUTER_API_KEY");
+    expect(() => validateConfiguration({ ...cfg, jev: { ...cfg.jev, model: "jev-latest" } })).toThrow();
+    expect(() => validateConfiguration({ ...cfg, jev: { ...cfg.jev, route: undefined } })).toThrow();
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    await expect(buildLiveProvider("jev", cfg, ledger).decide(request)).rejects.toMatchObject({ code: "MISSING_CREDENTIAL" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect((await ledger.inspect()).reservations).toHaveLength(0);
+  });
+
+  it("sends the same task once to OpenRouter and settles reported cost rather than estimated list price", async () => {
+    const transport = mockResponse(openRouterResponse());
+    const result = await buildLiveProvider("jev", openRouterConfig(), ledger).decide(request);
+    expect(transport).toHaveBeenCalledTimes(1);
+    const [url, init] = transport.mock.calls[0]!;
+    expect(url).toBe("https://openrouter.ai/api/v1/systemone");
+    expect(init?.method).toBe("POST");
+    expect(init?.redirect).toBe("error");
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${process.env.OPENROUTER_API_KEY}`);
+    expect(JSON.parse(String(init?.body))).toEqual({ ...jevPayload(request), model: OPENROUTER_JEV_MODEL });
+    expect(result).toMatchObject({
+      choice: "c1", model: OPENROUTER_JEV_REVISION, modelVersion: OPENROUTER_JEV_REVISION,
+      route: "openrouter", costUsd: 0.0000021, requestId: "gen-test-openrouter",
+      usage: { inputTokens: 100, outputTokens: 20 },
+    });
+    expect((await ledger.inspect()).reservations[0]).toMatchObject({ status: "settled", actualNanos: usdToNanos(0.0000021) });
+  });
+
+  it("does not invent a version or confidence when the response does not contain them", async () => {
+    mockResponse({
+      ...openRouterResponse(), model: OPENROUTER_JEV_MODEL,
+      answers: { decision: { type: "choice", choice: "c1", probabilities: { c1: 1, NO_REPAIR: 0, ABSTAIN: 0 } } },
+    });
+    const result = await buildLiveProvider("jev", openRouterConfig(), ledger).decide(request);
+    expect(result.modelVersion).toBeUndefined();
+    expect(result.confidence).toBeUndefined();
+  });
+
+  it.each([
+    ["missing cost", { ...openRouterResponse(), usage: { input_tokens: 100, output_tokens: 20 } }],
+    ["negative cost", { ...openRouterResponse(), usage: { input_tokens: 100, output_tokens: 20, cost: -1 } }],
+    ["over-budget cost", { ...openRouterResponse(), usage: { input_tokens: 100, output_tokens: 20, cost: 1 } }],
+    ["missing usage", { ...openRouterResponse(), usage: undefined }],
+    ["excess usage", { ...openRouterResponse(), usage: { input_tokens: 32_001, output_tokens: 20, cost: 0 } }],
+    ["wrong provider", { ...openRouterResponse(), provider: "Unknown" }],
+    ["missing generation", { ...openRouterResponse(), id: undefined }],
+    ["wrong revision", { ...openRouterResponse(), model: "typesafe/jev-1.13-20990101" }],
+    ["invalid answer", { ...openRouterResponse(), answers: {} }],
+  ])("retains unknown billing on %s and blocks another call", async (_label, body) => {
+    const transport = mockResponse(body);
+    const provider = buildLiveProvider("jev", openRouterConfig(), ledger);
+    await expect(provider.decide(request)).rejects.toThrow();
+    expect((await ledger.inspect()).reservations[0]?.status).toBe("unknown");
+    await expect(provider.decide(request)).rejects.toMatchObject({ code: "UNRESOLVED_BILLING" });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([401, 402, 403, 429, 503])("never retries HTTP %s or falls back to another route", async (status) => {
+    const transport = mockResponse({ error: { message: "private-openrouter-detail" } }, status);
+    await expect(buildLiveProvider("jev", openRouterConfig(), ledger).decide(request)).rejects.not.toThrow("private-openrouter-detail");
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect((await ledger.inspect()).reservations[0]?.status).toBe("unknown");
   });
 });
 

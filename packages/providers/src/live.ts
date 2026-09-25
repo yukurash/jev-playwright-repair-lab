@@ -11,11 +11,11 @@ import {
 } from "../../core/src/index.js";
 import { BudgetLedger, type Reservation, validateUsage } from "./budget.js";
 import {
-  AZURE_TOKEN_SCOPE, GATEWAY_JEV_MODEL, JEV_MODEL, jevCredentialName, verifyFreeOnly,
+  AZURE_TOKEN_SCOPE, GATEWAY_JEV_MODEL, JEV_MODEL, OPENROUTER_JEV_MODEL, OPENROUTER_JEV_REVISION, jevCredentialName, verifyFreeOnly,
   verifyPrivatePath, type Pricing, type ProviderConfiguration,
 } from "./configuration.js";
 import { canonicalRequest } from "./decision.js";
-import { integer, object, ProviderError, text } from "./errors.js";
+import { integer, nonnegative, object, ProviderError, text } from "./errors.js";
 
 let active = false;
 
@@ -203,6 +203,26 @@ function gatewayCost(value: unknown): number {
   return Number(value);
 }
 
+function parseOpenRouter(value: unknown, request: DecisionRequest): Omit<ProviderResult, "latencyMs"> {
+  const response = object(value, "OpenRouter response");
+  if (response.model !== OPENROUTER_JEV_MODEL && response.model !== OPENROUTER_JEV_REVISION) {
+    throw new ProviderError("MODEL_CHANGED", "OpenRouter returned an unexpected Jev model");
+  }
+  if (response.provider !== "TypeSafe") throw new ProviderError("ROUTE_CHANGED", "OpenRouter returned an unexpected provider");
+  const rawUsage = object(response.usage, "OpenRouter usage");
+  const usage = validateUsage({
+    inputTokens: integer(rawUsage.input_tokens, "input_tokens", 1),
+    outputTokens: integer(rawUsage.output_tokens, "output_tokens"),
+  });
+  return {
+    ...parseJevAnswer(response.answers, request, false),
+    model: response.model, route: "openrouter", usage,
+    ...(response.model === OPENROUTER_JEV_REVISION ? { modelVersion: response.model } : {}),
+    costUsd: nonnegative(rawUsage.cost, "OpenRouter billed cost"),
+    requestId: text(response.id, "OpenRouter generation ID"),
+  };
+}
+
 function parseGateway(value: unknown, request: DecisionRequest, config: ProviderConfiguration): Omit<ProviderResult, "latencyMs"> {
   const jev = config.jev;
   if (jev?.route !== "vercel-ai-gateway") throw new ProviderError("MISSING_PROVIDER", "Gateway configuration missing");
@@ -274,12 +294,14 @@ export function buildLiveProvider(
         throw new ProviderError("APPROVAL_REQUIRED", "Pricing, access, and publication approval are required before a live call");
       }
       const gateway = id === "jev" && config.jev?.route === "vercel-ai-gateway";
+      const openrouter = id === "jev" && config.jev?.route === "openrouter";
       const credentialName = jevCredentialName(config);
       if (id === "jev") verifyFreeOnly(config);
       if (id === "jev" && !process.env[credentialName]?.trim()) {
         throw new ProviderError("MISSING_CREDENTIAL", `${credentialName} is missing`);
       }
-      const body = id === "azure" ? azurePayload(request, config) : gateway ? gatewayPayload(request, config) : jevPayload(request);
+      const body = id === "azure" ? azurePayload(request, config) : gateway ? gatewayPayload(request, config)
+        : openrouter ? { ...jevPayload(request), model: OPENROUTER_JEV_MODEL } : jevPayload(request);
       const inputTokenLimit = checkBody(body, config);
       if (id === "jev" && inputTokenLimit > 32_000) {
         throw new ProviderError("INPUT_LIMIT", "Jev's single-question context allowance must be at most 32,000 tokens");
@@ -324,12 +346,12 @@ export function buildLiveProvider(
               }).withResponse();
               return { raw: result.data as unknown, requestId: result.request_id ?? undefined };
             }
-            if (gateway) {
+            if (gateway || openrouter) {
               verifyFreeOnly(config);
-              const url = "https://ai-gateway.vercel.sh/v1/evaluate";
+              const url = openrouter ? "https://openrouter.ai/api/v1/systemone" : "https://ai-gateway.vercel.sh/v1/evaluate";
               const response = await boundedFetch(url, config, controller.signal)(url, {
                 method: "POST",
-                headers: { "content-type": "application/json", authorization: `Bearer ${process.env.AI_GATEWAY_API_KEY!}` },
+                headers: { "content-type": "application/json", authorization: `Bearer ${process.env[credentialName]}` },
                 body: JSON.stringify(body),
               });
               const responseText = await response.text();
@@ -337,7 +359,7 @@ export function buildLiveProvider(
                 await recordRaw(config.rawResponseDirectory, reservation!, { status: response.status, body: responseText });
                 const code = response.status === 401 ? "AUTHENTICATION" : response.status === 403 ? "PERMISSION"
                   : response.status === 429 ? "RATE_LIMIT" : "PROVIDER_FAILURE";
-                throw new ProviderError(code, "Gateway HTTP request failed");
+                throw new ProviderError(code, `${openrouter ? "OpenRouter" : "Gateway"} HTTP request failed`);
               }
               return { raw: JSON.parse(responseText) as unknown, requestId: undefined };
             }
@@ -358,7 +380,8 @@ export function buildLiveProvider(
           controller.abort();
         }
         await recordRaw(config.rawResponseDirectory, reservation, raw);
-        const parsed = id === "azure" ? parseAzure(raw, request, config) : gateway ? parseGateway(raw, request, config) : parseJev(raw, request);
+        const parsed = id === "azure" ? parseAzure(raw, request, config) : gateway ? parseGateway(raw, request, config)
+          : openrouter ? parseOpenRouter(raw, request) : parseJev(raw, request);
         const usage: Usage = parsed.usage!;
         // Cached tokens are charged at the verified full input rate: never assume a discount.
         const costUsd = "costUsd" in parsed && typeof parsed.costUsd === "number"

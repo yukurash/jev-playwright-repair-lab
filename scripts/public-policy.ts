@@ -6,7 +6,7 @@ export function inspectPublicText(path: string, text: string): string[] {
   const checks: [RegExp, string][] = [
     [/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/, "private key"],
     [/\b(?:ghp_|github_pat_|sk-)[A-Za-z0-9_-]{24,}/, "credential-like value"],
-    [/(?:TYPESAFE_API_KEY|AZURE_OPENAI_API_KEY|AI_GATEWAY_API_KEY)\s*[:=]\s*["']?[A-Za-z0-9_-]{24,}/, "API key assignment"],
+    [/(?:TYPESAFE_API_KEY|AZURE_OPENAI_API_KEY|AI_GATEWAY_API_KEY|OPENROUTER_API_KEY)\s*[:=]\s*["']?[A-Za-z0-9_-]{24,}/, "API key assignment"],
     [/C:[\\/]Users[\\/](?!example\b|YOUR_USER\b)[^\\/\s"'<>]+/i, "personal local path"],
     [/https:\/\/(?!YOUR[-_]RESOURCE\.|example\.|<)[a-z0-9-]+\.(?:openai\.azure\.com|cognitiveservices\.azure\.com|services\.ai\.azure\.com)/i, "actual Azure endpoint"],
     [/^published:\s*(?:true|false)\s*$/m, "Zenn manuscript frontmatter"],
