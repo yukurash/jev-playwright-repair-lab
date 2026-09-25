@@ -139,6 +139,33 @@ function mockResponse(body: unknown, status = 200) {
 }
 
 describe("persistent budget", () => {
+  it("bounds an explicitly authorized batch and retains unknown cost across restarts", async () => {
+    const entry = await ledger.reserve("jev", 1, 100, 100);
+    await ledger.markUnknown(entry.id, "PERMISSION");
+    for (const count of [0, -1, 1.5, NaN, 1000]) {
+      await expect(ledger.authorizeAdditionalCalls(entry.id, count, "Test batch approval")).rejects.toThrow();
+    }
+    await ledger.authorizeAdditionalCalls(entry.id, 2, "Test: verified terminal rejection; user authorizes exactly two calls");
+    for (let i = 0; i < 2; i++) {
+      const restarted = new BudgetLedger(ledger.path);
+      const next = await restarted.reserve("jev", 1, 100, 100);
+      await restarted.settle(next.id, 0.5, { inputTokens: 10, outputTokens: 1 });
+    }
+    expect(committedNanos(await ledger.inspect())).toBe(2_000_000_000);
+    await expect(ledger.reserve("jev", 0, 100, 100)).rejects.toMatchObject({ code: "UNRESOLVED_BILLING" });
+    expect((await ledger.inspect()).reservations[0]?.status).toBe("unknown");
+  });
+
+  it("stops an authorized batch immediately when a new request becomes unknown", async () => {
+    const old = await ledger.reserve("jev", 1, 100, 100);
+    await ledger.markUnknown(old.id, "PERMISSION");
+    await ledger.authorizeAdditionalCalls(old.id, 3, "Test: explicit three-call authorization");
+    const next = await ledger.reserve("jev", 1, 100, 100);
+    await ledger.markUnknown(next.id, "TIMEOUT");
+    await expect(ledger.reserve("jev", 1, 100, 100)).rejects.toMatchObject({ code: "UNRESOLVED_BILLING" });
+    expect(committedNanos(await ledger.inspect())).toBe(2_000_000_000);
+  });
+
   it("retains a terminal rejection's unknown cost while authorizing only one additional reservation", async () => {
     const entry = await ledger.reserve("jev", 6, 100, 100);
     await ledger.markUnknown(entry.id, "PERMISSION");

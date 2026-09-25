@@ -209,6 +209,11 @@ export class BudgetLedger {
 
   /** Explicit user authorization after verifying a terminal rejection; this never settles or releases its cost. */
   async authorizeOneAdditionalCall(id: string, terminalEvidence: string): Promise<void> {
+    await this.authorizeAdditionalCalls(id, 1, terminalEvidence);
+  }
+
+  async authorizeAdditionalCalls(id: string, additionalCalls: number, terminalEvidence: string): Promise<void> {
+    integer(additionalCalls, "authorized additional calls", 1, 1000);
     text(terminalEvidence, "terminal rejection evidence and user authorization");
     await this.locked(async () => {
       const snapshot = await this.inspect();
@@ -220,7 +225,7 @@ export class BudgetLedger {
       }
       entry.continuation = {
         terminalEvidence, authorizedAt: new Date().toISOString(),
-        maxCalls: integer(snapshot.reservations.length + 1, "continuation maxCalls", 1, 1000),
+        maxCalls: integer(snapshot.reservations.length + additionalCalls, "continuation maxCalls", 1, 1000),
       };
       await this.persist(snapshot);
     });

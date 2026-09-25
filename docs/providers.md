@@ -35,7 +35,8 @@ const result = await provider.decide(request);
   `reserve(provider, maximumUsd, inputTokenLimit, outputTokenLimit, maxCalls?)`,
   `settle(id, actualUsd, usage)`, `markUnknown(id, code)`, and
   `reconcile(id, actualUsd, evidence)`, and the explicitly authorized
-  `authorizeOneAdditionalCall(id, terminalEvidence)` described below.
+  `authorizeOneAdditionalCall(id, terminalEvidence)` or bounded-batch
+  `authorizeAdditionalCalls(id, count, terminalEvidence)` described below.
 - `ProviderError` has `code` and optional `reservationId`. Error messages do not
   forward provider response bodies, endpoint names, keys, or SDK exception text.
 - `DEFAULT_LEDGER_PATH`, `AZURE_TOKEN_SCOPE`, `JEV_MODEL`, `MAX_BUDGET_USD`,
@@ -341,7 +342,7 @@ explicitly fixes these settings and disables SDK logs.
    development, smoke calls, evaluation, and explicit retries**.
 4. Persist and flush the reservation before acquiring Azure tokens or sending a
    model request. One unresolved reservation blocks other processes/providers
-   unless the one-call retained-maximum exception below was explicitly authorized;
+   unless the bounded retained-maximum exception below was explicitly authorized;
    a process-wide guard also enforces concurrency one.
 5. Both direct-provider SDKs set retries to zero on the client and request.
    Gateway and OpenRouter use one built-in fetch call without a retry loop. The transport also
@@ -371,6 +372,11 @@ explicitly fixes these settings and disables SDK logs.
    active requests, cost overruns, or other failures. `doctor` reports unresolved
    entries, retained maximum USD, and available authorizations separately.
    After that one call, the unresolved entry blocks further reservations again.
+   A separately authorized experiment can use
+   `authorizeAdditionalCalls(id, count, terminalEvidence)` with an explicit
+   positive integer count. This does not create an unlimited exception: every
+   reservation consumes one allowance, the existing call and dollar caps still
+   apply, and any new unknown request immediately blocks the remainder.
 9. Locks are never auto-expired or stolen. For a crash lock, first verify the
    recorded process and any in-flight request are no longer running; preserve the
    ledger/evidence, remove only that confirmed stale lock, and reconcile any
