@@ -182,5 +182,11 @@ export function formatNumber(value: number): string {
 export function formatCost(value: number | undefined | null): string {
   if (value === undefined || value === null) return "未記録";
   if (value > 0 && value < 0.000001) return `$${value.toExponential(2)}`;
-  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 9 })}`;
+}
+
+export function formatDuration(value: number | null): string {
+  if (value === null) return "未記録";
+  if (value > 0 && value < 0.01) return `${value.toExponential(2)} ms`;
+  return value < 1000 ? `${formatNumber(value)} ms` : `${formatNumber(value / 1000)} 秒`;
 }

@@ -6,8 +6,9 @@ The [three-way comparison](comparison-results.md) was completed on 2026-09-25
 JST: 324 scheduled/recorded final trials, 108 per strategy. GPT and Jev each
 made 90 API decisions; all three strategies had 18 code-guard trials. The
 [original GPT-only run](gpt-5.5-results.md) is preserved unchanged. These were
-separate schedules, not cross-provider interleaving. The explanatory empty-state
-demo remains distinct from recorded results.
+separate schedules, not cross-provider interleaving. The replay starts with a
+recorded decision-switching story; all trials and provenance are available in
+disclosure panels. Empty or partial data never fabricates a completed comparison.
 
 ## What is being compared
 
