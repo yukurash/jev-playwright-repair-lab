@@ -395,6 +395,22 @@ describe("config and deterministic baseline", () => {
 });
 
 describe("OpenRouter System One HTTP transport (mock fetch only)", () => {
+  it.each([0.09, 0.11])("preserves hundredth-rounded probabilities with ABSTAIN=%s without renormalizing", async (abstain) => {
+    const probabilities = { c1: 0.6, NO_REPAIR: 0.3, ABSTAIN: abstain };
+    mockResponse({ ...openRouterResponse(), answers: { decision: { type: "choice", choice: "c1", probabilities } } });
+    const result = await buildLiveProvider("jev", openRouterConfig(), ledger).decide(request);
+    expect(result.probabilities).toEqual(probabilities);
+    expect(result.choice).toBe("c1");
+  });
+
+  it.each([0, 0.08, 0.12, 0.091])("rejects sums outside the observed rounding envelope with ABSTAIN=%s", async (abstain) => {
+    mockResponse({ ...openRouterResponse(), answers: {
+      decision: { type: "choice", choice: "c1", probabilities: { c1: 0.6, NO_REPAIR: 0.3, ABSTAIN: abstain } },
+    } });
+    await expect(buildLiveProvider("jev", openRouterConfig(), ledger).decide(request)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    expect((await ledger.inspect()).reservations[0]?.status).toBe("unknown");
+  });
+
   it("requires the explicit route, namespace and dedicated key", async () => {
     const cfg = openRouterConfig();
     expect(validateConfiguration(cfg)).toEqual(cfg);

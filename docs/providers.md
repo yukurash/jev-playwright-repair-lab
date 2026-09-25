@@ -228,6 +228,13 @@ snake-case token usage, valid probabilities, and a numeric `usage.cost`.
 Missing or over-bound usage/cost fails closed with the maximum reservation held.
 It settles the reported debit rather than substituting a list-price estimate.
 
+Development responses were observed with hundredth-rounded probabilities whose
+sum was 0.99. For this route only, when every probability is on that grid, the
+sum check permits at most half a hundredth per option of rounding error.
+Values, keys and the chosen option are still validated; raw probabilities are
+preserved without normalization. Other distributions retain the stricter sum
+tolerance. This is response-format handling, not confidence-based decision gating.
+
 Responses must name `typesafe/jev-1.13` or the verified dated identifier
 `typesafe/jev-1.13-20260917`. Only the latter is recorded as `modelVersion`;
 this is a returned provider identifier, not proof of immutable model weights.

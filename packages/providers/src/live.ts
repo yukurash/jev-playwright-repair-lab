@@ -162,7 +162,7 @@ function probability(value: unknown): number {
   return value;
 }
 
-function parseJevAnswer(value: unknown, request: DecisionRequest, requireConfidence: boolean) {
+function parseJevAnswer(value: unknown, request: DecisionRequest, requireConfidence: boolean, allowRoundedProbabilities = false) {
   const answers = object(value, "Jev answers");
   if (Object.keys(answers).length !== 1 || !Object.hasOwn(answers, "decision")) {
     throw new ProviderError("INVALID_RESPONSE", "Unexpected Jev answer keys");
@@ -175,7 +175,11 @@ function parseJevAnswer(value: unknown, request: DecisionRequest, requireConfide
     throw new ProviderError("INVALID_RESPONSE", "Jev probabilities differ from the finite choice set");
   }
   const probabilities = Object.fromEntries(allowed.map((id) => [id, probability(distribution[id])]));
-  if (Math.abs(Object.values(probabilities).reduce((sum, value) => sum + value, 0) - 1) > 0.001) {
+  const values = Object.values(probabilities);
+  // OpenRouter responses observed in development round each probability to hundredths.
+  const rounded = allowRoundedProbabilities && values.every((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-9);
+  const tolerance = rounded ? Math.max(0.001, values.length * 0.005) : 0.001;
+  if (Math.abs(values.reduce((sum, value) => sum + value, 0) - 1) > tolerance + 1e-12) {
     throw new ProviderError("INVALID_RESPONSE", "Jev probabilities do not sum to one");
   }
   return {
@@ -215,7 +219,7 @@ function parseOpenRouter(value: unknown, request: DecisionRequest): Omit<Provide
     outputTokens: integer(rawUsage.output_tokens, "output_tokens"),
   });
   return {
-    ...parseJevAnswer(response.answers, request, false),
+    ...parseJevAnswer(response.answers, request, false, true),
     model: response.model, route: "openrouter", usage,
     ...(response.model === OPENROUTER_JEV_REVISION ? { modelVersion: response.model } : {}),
     costUsd: nonnegative(rawUsage.cost, "OpenRouter billed cost"),
