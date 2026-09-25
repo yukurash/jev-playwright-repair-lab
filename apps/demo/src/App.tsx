@@ -28,9 +28,9 @@ function Header({ storyReady }: { storyReady: boolean }) {
   </header>;
 }
 
-function ProviderSwitch({ value, onChange, label, includeRule = true }: { value: ProviderId; onChange: (value: ProviderId) => void; label: string; includeRule?: boolean }) {
+function ProviderSwitch({ value, onChange, label }: { value: ProviderId; onChange: (value: ProviderId) => void; label: string }) {
   return <div className="provider-switch" role="group" aria-label={label}>
-    {(includeRule ? providers : providers.filter((provider) => provider !== "rule")).map((provider) =>
+    {providers.map((provider) =>
       <button key={provider} type="button" aria-pressed={value === provider} onClick={() => onChange(provider)}><span className={`provider-dot ${provider}`} aria-hidden="true" />{names[provider]}</button>)}
   </div>;
 }
@@ -111,19 +111,25 @@ function Metrics({ dataset }: { dataset: PublicDataset }) {
 }
 
 function Boundary({ dataset }: { dataset: PublicDataset }) {
-  const [provider, setProvider] = useState<ProviderId>("jev");
-  const trial = firstTrial(dataset, "email-not-sent-a", provider);
-  if (!trial) return null;
-  const selected = trial.candidates.find((candidate) => candidate.id === trial.decision);
+  const gpt = firstTrial(dataset, "email-not-sent-a", "azure");
+  const jev = firstTrial(dataset, "email-not-sent-a", "jev");
+  if (!gpt || !jev) return null;
+  const sameResult = (["decision", "targetCorrect", "originalTestPassed", "oraclePassed"] as const)
+    .every((field) => gpt[field] === jev[field]);
   const greenCounts = summarize(dataset.trials).filter((row) => row.provider !== "rule");
   return <section className="boundary-section" aria-labelledby="boundary-title">
-    <div className="boundary-copy"><p className="eyebrow">03 / THE CATCH</p><h2 id="boundary-title">ただし、<br />緑でも直ってない。</h2><p>正しいボタンを選んだ。テストも通った。<br />それでも、領収書のメールは送られていなかった。</p><span className="boundary-label">「選ぶ」の、その先は？</span></div>
+    <div className="boundary-copy"><p className="eyebrow">03 / THE SHARED LIMIT</p><h2 id="boundary-title">どちらを使っても、<br />検証は必要。</h2><p>操作先を選ぶことと、<br />実際にメールが送られたかを確かめることは別。</p><span className="boundary-label">ここは優劣ではなく、共通の限界。</span></div>
     <details className="boundary-card"><summary><span className="test-green">✓ TEST PASSED</span><strong>その裏側を見る</strong><span className="fold-plus" aria-hidden="true">＋</span></summary>
-      <div className="boundary-body"><ProviderSwitch value={provider} onChange={setProvider} label="落とし穴の判断役" includeRule={false} />
-        <div aria-live="polite"><p className="boundary-selected">{names[provider]} → <strong>{selected ? candidateName(selected) : trial.decision}</strong></p>
-          <Outcome label="操作先の正しさ" value={trial.targetCorrect} /><Outcome label="元のアサーション" value={trial.originalTestPassed} /><Outcome label="独立 oracle の状態検証" value={trial.oraclePassed} />
-        </div>
-        <p><strong>不具合を止めたのは、モデルではなく検証コード。</strong><br />同種の結果は{greenCounts.map((row) => `${names[row.provider]}で${row.rightTargetRegressionGreen}試行`).join("、")}。正しく選ぶことと、業務結果の正しさは別でした。</p>
+      <div className="boundary-body">
+        <p className="shared-result-label">{sameResult ? "GPT-5.5・Jevともに同じ結果" : "GPT-5.5・Jevの保存された結果"}</p>
+        {(sameResult ? [gpt] : [gpt, jev]).map((trial) => {
+          const selected = trial.candidates.find((candidate) => candidate.id === trial.decision);
+          return <div className="boundary-result" key={trial.provider}>
+            <p className="boundary-selected">{sameResult ? "両モデルが選んだ操作先" : names[trial.provider]} → <strong>{selected ? candidateName(selected) : trial.decision ?? "未記録"}</strong></p>
+            <Outcome label="操作先の正しさ" value={trial.targetCorrect} /><Outcome label="元のアサーション" value={trial.originalTestPassed} /><Outcome label="独立 oracle の状態検証" value={trial.oraclePassed} />
+          </div>;
+        })}
+        <p><strong>業務結果まで確かめるのは、モデルではなく検証コード。</strong><br />正しい操作先・元テストPASSでも業務状態が誤っていた結果は{greenCounts.map((row) => `${names[row.provider]}で${row.rightTargetRegressionGreen}試行`).join("、")}でした。</p>
         <p className="muted">email-not-sent-a / 各方式の最初の反復。自作の独立検証であり、本番で自動的に手に入る正解判定器ではありません。</p>
       </div>
     </details>

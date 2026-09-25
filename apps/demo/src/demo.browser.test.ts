@@ -53,6 +53,12 @@ beforeAll(async () => {
   ]));
   await buildPreview("invalid", { ...datasetFixture(), schemaVersion: 99 });
   await buildPreview("recorded", recorded);
+  await buildPreview("different-boundary", {
+    ...recorded,
+    trials: recorded.trials.map((trial) => trial.caseId === "email-not-sent-a" && trial.provider === "jev"
+      ? { ...trial, decision: "ABSTAIN", status: "abstained", repairedTest: undefined, targetCorrect: null, originalTestPassed: null, oraclePassed: null }
+      : trial),
+  });
   await buildPreview("invalid-comparison", { ...comparisonFixture(), comparison: undefined });
 }, 120_000);
 
@@ -137,23 +143,37 @@ describe("Jev switchboard", () => {
     } finally { await page.close(); }
   });
 
-  it("reveals the second story without crediting either model for the code's rejection", async () => {
+  it("shows the shared limit once without suggesting a difference through model switches", async () => {
     const page = await open("recorded");
     try {
       const boundary = page.locator(".boundary-section");
+      await browserExpect(boundary.getByRole("heading")).toHaveText("どちらを使っても、検証は必要。");
+      await browserExpect(boundary).toContainText("ここは優劣ではなく、共通の限界");
       await browserExpect(boundary.locator(".boundary-body")).not.toBeVisible();
       await boundary.getByText("その裏側を見る", { exact: true }).click();
-      for (const provider of ["Jev", "GPT-5.5"]) {
-        await boundary.getByRole("button", { name: provider, exact: true }).click();
-        await browserExpect(boundary.locator(".outcome").filter({ hasText: "元のアサーション" })).toContainText("PASS");
-        await browserExpect(boundary.locator(".outcome").filter({ hasText: "独立 oracle" })).toContainText("FAIL");
-        await browserExpect(boundary.locator(".outcome").filter({ hasText: "操作先" })).toContainText("PASS");
-      }
-      await browserExpect(boundary).toContainText("不具合を止めたのは、モデルではなく検証コード");
+      await browserExpect(boundary.getByRole("button")).toHaveCount(0);
+      await browserExpect(boundary).toContainText("GPT-5.5・Jevともに同じ結果");
+      await browserExpect(boundary.locator(".boundary-result")).toHaveCount(1);
+      await browserExpect(boundary.locator(".boundary-selected")).toContainText("両モデルが選んだ操作先 → Email receipt now");
+      await browserExpect(boundary.locator(".outcome").filter({ hasText: "元のアサーション" })).toContainText("PASS");
+      await browserExpect(boundary.locator(".outcome").filter({ hasText: "独立 oracle" })).toContainText("FAIL");
+      await browserExpect(boundary.locator(".outcome").filter({ hasText: "操作先" })).toContainText("PASS");
+      await browserExpect(boundary).toContainText("業務結果まで確かめるのは、モデルではなく検証コード");
       await browserExpect(boundary).toContainText("GPT-5.5で9試行、Jevで9試行");
     } finally { await page.close(); }
   });
 
+  it("does not label differing or unverified records as an identical outcome", async () => {
+    const page = await open("different-boundary");
+    try {
+      const boundary = page.locator(".boundary-section");
+      await boundary.getByText("その裏側を見る", { exact: true }).click();
+      await browserExpect(boundary.locator(".shared-result-label")).toHaveText("GPT-5.5・Jevの保存された結果");
+      await browserExpect(boundary.locator(".boundary-result")).toHaveCount(2);
+      await browserExpect(boundary.locator(".boundary-result").last()).toContainText("Jev → ABSTAIN");
+      await browserExpect(boundary.locator(".boundary-result").last().getByText("未検証", { exact: true })).toHaveCount(3);
+    } finally { await page.close(); }
+  });
   it("retains all 324 records and complete provenance behind explicit disclosure controls", async () => {
     const page = await open("recorded");
     try {

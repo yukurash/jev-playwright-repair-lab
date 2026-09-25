@@ -167,8 +167,8 @@ h2 { font-size: clamp(25px, 2.6vw, 36px); line-height: 1.55; letter-spacing: -.0
 .boundary-card .fold-plus { grid-column: 2; grid-row: 1 / 3; align-self: center; }
 details[open] > summary .fold-plus { transform: rotate(45deg); }
 .boundary-body { padding: 0 25px 25px; }
-.boundary-body .provider-switch { display: inline-flex; margin-bottom: 16px; }
 .boundary-body p { font-size: 13px; margin: 18px 0; }
+.boundary-body .shared-result-label { color: var(--ink); border-bottom: 1px solid var(--line); padding-bottom: 16px; font-weight: 650; }
 .boundary-selected { font-size: 13px; overflow-wrap: anywhere; }
 .outcome { padding: 15px 0; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 15px; font-size: 12px; }
 .outcome strong { font-weight: 450; }
