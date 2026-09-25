@@ -150,7 +150,10 @@ async function evaluate(): Promise<void> {
     configSha256: config === null ? null : hash(JSON.stringify(config)),
     providerSettings: config === null ? null : {
       azure: config.azure && { model: config.azure.model, version: config.azure.modelVersion },
-      jev: config.jev && { model: config.jev.model },
+      jev: config.jev && {
+        model: config.jev.model, route: config.jev.route ?? "typesafe",
+        ...(config.jev.route === "vercel-ai-gateway" ? { provider: config.jev.provider, requireFree: config.jev.requireFree, freeUntil: config.jev.freeUntil } : {}),
+      },
       limits: config.limits,
     },
   });

@@ -9,6 +9,7 @@ export const PRIVATE_ROOT = resolve(PUBLIC_ROOT, "..", "jev-playwright-repair-la
 export const DEFAULT_LEDGER_PATH = resolve(PRIVATE_ROOT, "budget.json");
 export const AZURE_TOKEN_SCOPE = "https://ai.azure.com/.default";
 export const JEV_MODEL = "jev-1.13.0";
+export const GATEWAY_JEV_MODEL = "typesafe-ai/jev";
 
 export interface Pricing {
   inputUsdPerMillion: number;
@@ -40,7 +41,13 @@ export interface ProviderConfiguration {
     modelVersion: "2026-04-24";
     pricing: Pricing;
   };
-  jev?: { model: typeof JEV_MODEL; pricing: Pricing };
+  jev?: (
+    | { route?: "typesafe"; model: typeof JEV_MODEL }
+    | {
+      route: "vercel-ai-gateway"; model: typeof GATEWAY_JEV_MODEL;
+      provider: "typesafe-ai" | "digitalocean"; requireFree: boolean; freeUntil?: string;
+    }
+  ) & { pricing: Pricing };
   rawResponseDirectory?: string;
 }
 
@@ -145,13 +152,35 @@ export function validateConfiguration(value: unknown): ProviderConfiguration {
   }
   if (data.jev !== undefined) {
     const jev = object(data.jev, "jev");
-    keys(jev, ["model", "pricing"], "jev");
-    if (jev.model !== JEV_MODEL) throw new ProviderError("MODEL_CHANGED", "Jev must be pinned to jev-1.13.0");
+    const gateway = jev.route === "vercel-ai-gateway";
+    keys(jev, gateway ? ["route", "model", "provider", "requireFree", "freeUntil", "pricing"] : ["route", "model", "pricing"], "jev");
+    if (jev.route !== undefined && jev.route !== "typesafe" && !gateway) {
+      throw new ProviderError("INVALID_CONFIGURATION", "Unknown Jev route");
+    }
+    if (jev.model !== (gateway ? GATEWAY_JEV_MODEL : JEV_MODEL)) {
+      throw new ProviderError("MODEL_CHANGED", "Jev model must match its explicitly configured route");
+    }
     const rates = pricing(jev.pricing);
     if (rates.outputUsdPerMillion !== 0) {
       throw new ProviderError("UNVERIFIED_BILLING", "Jev output has no server token cap; this adapter requires verified input-only billing");
     }
-    result.jev = { model: JEV_MODEL, pricing: rates };
+    if (gateway) {
+      if (typeof jev.requireFree !== "boolean") throw new ProviderError("INVALID_CONFIGURATION", "Gateway requireFree must be explicit");
+      if (jev.provider !== "typesafe-ai" && jev.provider !== "digitalocean") {
+        throw new ProviderError("INVALID_CONFIGURATION", "Gateway must restrict routing to one explicitly selected Jev provider");
+      }
+      if (jev.freeUntil !== undefined && (typeof jev.freeUntil !== "string" ||
+          !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(jev.freeUntil) || !Number.isFinite(Date.parse(jev.freeUntil)))) {
+        throw new ProviderError("INVALID_CONFIGURATION", "Free-pricing expiry requires an unambiguous timestamp with time zone");
+      }
+      result.jev = {
+        route: "vercel-ai-gateway", model: GATEWAY_JEV_MODEL, provider: jev.provider,
+        requireFree: jev.requireFree, pricing: rates,
+        ...(typeof jev.freeUntil === "string" ? { freeUntil: jev.freeUntil } : {}),
+      };
+    } else {
+      result.jev = { model: JEV_MODEL, pricing: rates, ...(jev.route === "typesafe" ? { route: "typesafe" as const } : {}) };
+    }
   }
   if (data.rawResponseDirectory !== undefined) {
     result.rawResponseDirectory = text(data.rawResponseDirectory, "rawResponseDirectory");
@@ -176,6 +205,23 @@ export interface ConfigurationInspection {
   budget?: { capUsd: number; committedUsd: number; calls: number; unresolved: number };
 }
 
+export function jevCredentialName(config: ProviderConfiguration): "AI_GATEWAY_API_KEY" | "TYPESAFE_API_KEY" {
+  return config.jev?.route === "vercel-ai-gateway" ? "AI_GATEWAY_API_KEY" : "TYPESAFE_API_KEY";
+}
+
+export function verifyFreeOnly(config: ProviderConfiguration): void {
+  const jev = config.jev;
+  if (jev?.route === "vercel-ai-gateway" && jev.requireFree) {
+    if (jev.pricing.inputUsdPerMillion !== 0 || jev.pricing.outputUsdPerMillion !== 0 || jev.pricing.fixedUsdPerRequest !== 0) {
+      throw new ProviderError("FREE_ONLY", "Free-only Gateway calls require verified zero applicable rates, not assumed promotional pricing");
+    }
+    const expiresAt = jev.freeUntil ? Date.parse(jev.freeUntil) : NaN;
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() + config.limits.timeoutMs) {
+      throw new ProviderError("FREE_NOT_CONFIRMED", "Verified free-pricing validity must cover the complete request deadline");
+    }
+  }
+}
+
 /** Read-only: no credential acquisition, model listing, model call, or file creation. */
 export async function inspectConfiguration(path?: string): Promise<ConfigurationInspection> {
   const report: ConfigurationInspection = {
@@ -191,8 +237,15 @@ export async function inspectConfiguration(path?: string): Promise<Configuration
       if (!approved) report.issues.push(`APPROVAL_REQUIRED: ${flag}`);
     }
     report.providers.azure = !!config.azure;
-    report.providers.jev = !!config.jev && !!process.env.TYPESAFE_API_KEY?.trim();
-    if (config.jev && !report.providers.jev) report.issues.push("TYPESAFE_API_KEY_MISSING");
+    const credentialName = jevCredentialName(config);
+    report.providers.jev = !!config.jev && !!process.env[credentialName]?.trim();
+    if (config.jev && !report.providers.jev) report.issues.push(`${credentialName}_MISSING`);
+    try {
+      verifyFreeOnly(config);
+    } catch (error) {
+      if (!(error instanceof ProviderError)) throw error;
+      report.issues.push(error.code);
+    }
     if (!config.azure && !config.jev) report.issues.push("NO_LIVE_PROVIDER_CONFIGURED");
     const snapshot = await new BudgetLedger(config.ledgerPath, config.budgetUsd).inspect();
     report.budget = {

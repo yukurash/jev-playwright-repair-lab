@@ -74,6 +74,16 @@ No inference about provider invoice totals should be made from an incomplete run
 The budget guard is conservative accounting, not a guarantee against every
 possible provider billing discrepancy.
 
+For the optional Vercel route, record `route: "vercel-ai-gateway"` and retain raw
+routing/charge metadata privately. Gateway latency includes an intermediary;
+the `typesafe-ai/jev` alias does not independently prove a pinned upstream
+revision. Report the actual Gateway debit separately from its market price,
+and disclose promotional pricing rather than presenting free promotional calls
+as a permanent cost advantage. The adapter is mock-tested; no live Jev results
+are available yet. The GPT-only run remains unchanged. A later comparison must
+disclose separately run schedules/source SHAs and verify unchanged fixtures and
+instructions; do not present it as an interleaved, single-source experiment.
+
 ## Runtime
 
 Playwright is pinned to 1.61.1 with Chromium 149.0.7827.55 (revision 1228).

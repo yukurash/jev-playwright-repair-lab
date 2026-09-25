@@ -117,6 +117,81 @@ response bytes and observed output usage, and refuses changed billing assumption
 It does not invent an unsupported server-side output limit. The one-question
 input allowance must be at most 32,000 tokens.
 
+### Jev through Vercel AI Gateway
+
+Select this route explicitly; it never replaces the direct TypeSafe route
+automatically. `AI_GATEWAY_API_KEY` is used only for the documented
+`POST https://ai-gateway.vercel.sh/v1/evaluate` endpoint, using Node's built-in
+`fetch`. No new SDK or dependency is required. The same context, instructions,
+Choice criteria and decision validation are retained. This route uses camelCase
+`usage.inputTokens` / `outputTokens`, not TypeSafe's snake_case usage.
+
+Replace the `jev` section in a **separate private config** with:
+
+```json
+{
+  "route": "vercel-ai-gateway",
+  "model": "typesafe-ai/jev",
+  "provider": "digitalocean",
+  "requireFree": true,
+  "pricing": {
+    "inputUsdPerMillion": 0.042,
+    "outputUsdPerMillion": 0,
+    "fixedUsdPerRequest": 0,
+    "source": "https://ai-gateway.vercel.sh/v1/models/typesafe-ai/jev/endpoints",
+    "verifiedAt": "2026-09-25"
+  }
+}
+```
+
+This example intentionally **blocks inference**: the public catalog is nonzero
+and free-pricing validity is unknown. Keep all approval flags false. Reuse the
+existing fixed budget ledger; never initialize a new one for Gateway.
+Use `--config <absolute-private-config-path>` with the existing CLI commands.
+Without `--live`, `doctor` only checks local prerequisites, including whether the
+correct key is present. It neither authenticates the key nor checks live prices.
+
+The caller must select one verified upstream (`digitalocean` or `typesafe-ai`).
+The adapter sends `providerOptions.gateway.only` and validates returned routing
+identifiers and the final provider. A catalog listing or key does not prove that
+an upstream is available to a particular account. There is one client request,
+no automatic retries, no model fallback, and redirects are refused. Gateway's
+internal attempts are outside client control; when metadata reports more than
+one upstream attempt, the result is rejected and retained for reconciliation.
+
+For **free-only** use, all three applicable prices must be verified zero,
+approval flags must be true, and `freeUntil` must contain an independently
+confirmed ISO timestamp with a time zone covering the entire request deadline.
+The adapter checks this both before reservation and immediately before sending.
+Do not invent an expiry from a date-only campaign banner or set catalog prices
+to zero just to pass the guard. These local checks cannot guarantee a service's
+bill. Confirm the key's team, selected upstream, promotion validity and all
+additional fees/BYOK settings before authorizing a request. Positive credits and
+free-tier eligibility are not proof of zero-priced inference.
+
+As of 2026-09-25, the public page advertised free promotional pricing through
+September 25, while the provider catalog reported nonzero input pricing. The
+cutoff time was not established. **No live Jev request was made to test the
+promotion.** A read-only credits request validated the locally supplied Gateway
+key, but did not establish free pricing or evaluation access.
+
+The parser requires complete token usage, finite Choice probabilities, routing
+metadata, generation ID and decimal-string `cost`, `surchargeCost` and
+`gatewayCost`. Missing fields fail closed rather than becoming zero. Confidence
+is optional on this API and is not synthesized. The ledger settles the reported
+`gatewayCost`, not a market-price calculation; market pricing stays in the
+private raw response. A reported charge during free-only use, an over-bound
+debit or an incomplete response blocks subsequent calls pending reconciliation.
+This post-response check detects discrepancies; it is **not** prior permission
+to make a potentially paid request.
+
+Records carry `route: "vercel-ai-gateway"` and the returned alias
+`typesafe-ai/jev`. They do not fabricate `modelVersion: "jev-1.13.0"`: this route
+does not establish an immutable upstream model revision. Raw routing metadata
+and generation IDs remain private. The public replay identifies the Gateway
+route, and decision latency includes the intermediary. No Gateway measurements
+have been added to the published GPT-only dataset.
+
 ## Private configuration
 
 Create the config outside the checkout, normally in the sibling directory:
@@ -196,7 +271,9 @@ credentials. Paths and existing ancestors are resolved to reject symlink/junctio
 routes back into the public repository.
 
 Provide the Jev key only through the local process environment
-`TYPESAFE_API_KEY`. Never place a key in JSON, command history, a chat message, a
+(`TYPESAFE_API_KEY` for direct access, `AI_GATEWAY_API_KEY` for Gateway).
+The CLI also loads the private `local-config/providers.env` file.
+Never place a key in JSON, command history, a chat message, a
 test fixture, the public demo, Git, or an Actions secret for live PR execution.
 The SDK's environment base-URL/model/logging overrides are not used: the adapter
 explicitly fixes these settings and disables SDK logs.
@@ -220,7 +297,8 @@ explicitly fixes these settings and disables SDK logs.
 4. Persist and flush the reservation before acquiring Azure tokens or sending a
    model request. One unresolved reservation blocks other processes/providers;
    a process-wide guard also enforces concurrency one.
-5. Both SDKs set retries to zero on the client and request. The transport also
+5. Both direct-provider SDKs set retries to zero on the client and request.
+   Gateway uses one built-in fetch call without a retry loop. The transport also
    rejects a second attempt, unexpected URL/method, and HTTP redirects. It bounds
    response bytes. A total deadline aborts the call and includes credential wait.
 6. Settle only complete validated responses with valid usage within the reserved
@@ -266,6 +344,11 @@ Verified against these first-party documents and installed SDK declarations:
 - [TypeSafe SDK v0.6.0 request/retry/result types](https://github.com/typesafe-ai/typesafe-sdk-js/blob/v0.6.0/src/types.ts)
 - [TypeSafe Choice HTTP API and usage](https://docs.typesafe.ai/api)
 - [Jev pinned model, input-only billing, and context limits](https://docs.typesafe.ai/models)
+- [Vercel evaluation HTTP API and Choice response](https://vercel.com/docs/ai-gateway/modalities/evaluation#http-api)
+- [Vercel provider routing controls](https://vercel.com/docs/ai-gateway/models-and-providers/provider-filtering-and-ordering)
+- [Vercel generation-cost definitions and read-only credits API](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api)
+- [Vercel Jev promotion announcement](https://vercel.com/changelog/ai-gateway-now-supports-typesafe-clients-and-http-api-for-jev)
+- [Gateway pricing and additional charges](https://vercel.com/docs/ai-gateway/pricing)
 
 SDK versions, the actual returned model string, source/data/config fingerprints,
 and local verification dates should be recorded by the experiment runner. Do not

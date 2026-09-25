@@ -55,4 +55,12 @@ describe("experiment integrity", () => {
     expect(JSON.stringify(result)).not.toContain("private-transport-details");
     expect(() => publicDataset([trial, { ...trial, sourceSha: "b".repeat(40) }], true)).toThrow();
   });
+  it("preserves a gateway route without inventing an upstream model version", () => {
+    const recorded: TrialResult = { ...trial, provider: "jev", model: "typesafe-ai/jev", route: "vercel-ai-gateway" };
+    const exported = publicDataset([recorded], true).trials[0]!;
+    expect(exported.route).toBe("vercel-ai-gateway");
+    expect(exported.modelVersion).toBeUndefined();
+    expect(() => assertTrial({ ...recorded, route: "unverified-route" })).toThrow();
+    expect(() => assertTrial({ ...recorded, provider: "azure" })).toThrow();
+  });
 });

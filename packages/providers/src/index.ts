@@ -6,7 +6,7 @@ import { createRuleProvider } from "./rule.js";
 
 export { BudgetLedger, committedNanos, MAX_BUDGET_USD, usdToNanos, type BudgetSnapshot, type Reservation } from "./budget.js";
 export {
-  AZURE_TOKEN_SCOPE, DEFAULT_LEDGER_PATH, JEV_MODEL, loadConfiguration, inspectConfiguration,
+  AZURE_TOKEN_SCOPE, DEFAULT_LEDGER_PATH, JEV_MODEL, GATEWAY_JEV_MODEL, loadConfiguration, inspectConfiguration,
   type ConfigurationInspection, type Pricing, type ProviderConfiguration,
 } from "./configuration.js";
 export { ProviderError } from "./errors.js";
