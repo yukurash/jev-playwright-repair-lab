@@ -80,7 +80,7 @@ the `typesafe-ai/jev` alias does not independently prove a pinned upstream
 revision. Report the actual Gateway debit separately from its market price,
 and disclose promotional pricing rather than presenting free promotional calls
 as a permanent cost advantage. The adapter is mock-tested; no live Jev results
-are available yet. The GPT-only run remains unchanged. A later comparison must
+are included in the public dataset. The GPT-only run remains unchanged. A later comparison must
 disclose separately run schedules/source SHAs and verify unchanged fixtures and
 instructions; do not present it as an interleaved, single-source experiment.
 

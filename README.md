@@ -72,7 +72,7 @@ Alternatively, select the explicit **Vercel AI Gateway** route and supply
 `AI_GATEWAY_API_KEY` in that same private environment file. Do not put a Gateway
 key in `TYPESAFE_API_KEY`. The route uses `typesafe-ai/jev`, not a verified pinned
 upstream revision. See [Gateway setup and free-only checks](docs/providers.md#jev-through-vercel-ai-gateway).
-Gateway support is mock-tested; Jev remains unmeasured. API-key validity and a
+Gateway support is mock-tested; the published Jev comparison remains unmeasured. API-key validity and a
 promotional banner do not establish that an inference request is free.
 
 The explicit **OpenRouter** route uses `OPENROUTER_API_KEY` from the private
